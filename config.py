@@ -5,7 +5,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="PMU_SPORT_")
 
     # Server
-    port: int = 5003
+    port: int = 5500
 
     # Kambi API
     kambi_base_url: str = "https://eu.offering-api.kambicdn.com/offering/v2018/pmusportsfr"
