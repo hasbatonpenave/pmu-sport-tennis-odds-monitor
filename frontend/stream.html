@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PMU SPORT — SSE Stream Log</title>
+<style>
+  :root {
+    --bg: #0d1117; --card: #161b22; --border: #30363d;
+    --text: #c9d1d9; --text-dim: #8b949e; --green: #3fb950; --red: #f85149; --blue: #58a6ff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'SF Mono', 'Fira Mono', monospace; font-size: 13px; padding: 16px; }
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .header h1 { font-size: 18px; font-weight: 600; }
+  .status { font-size: 12px; }
+  .status .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; }
+  .dot.live { background: var(--green); }
+  .dot.dead { background: var(--red); }
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
+  .controls button { background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 12px; font-family: inherit; }
+  .controls button.active { background: var(--blue); border-color: var(--blue); color: #fff; }
+  .counter { font-size: 12px; color: var(--text-dim); }
+  #log { max-height: calc(100vh - 160px); overflow-y: auto; }
+  .event { padding: 6px 8px; border-bottom: 1px solid var(--border); font-size: 12px; display: flex; gap: 8px; }
+  .event .ts { color: var(--text-dim); white-space: nowrap; min-width: 80px; }
+  .event .badge { font-size: 10px; padding: 1px 6px; border-radius: 3px; font-weight: 600; white-space: nowrap; }
+  .badge.price { background: rgba(63,185,80,0.2); color: var(--green); }
+  .badge.snapshot { background: rgba(88,166,255,0.2); color: var(--blue); }
+  .event .body { flex: 1; word-break: break-all; }
+  .event.live-ev { background: rgba(63,185,80,0.03); }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>📡 SSE Event Log</h1>
+  <div class="status"><span class="dot" id="dot"></span><span id="statusTxt">Connecting...</span></div>
+</div>
+<div class="controls">
+  <button class="active" data-type="all">All</button>
+  <button data-type="price">Price</button>
+  <button data-type="snapshot">Snapshot</button>
+  <button id="pauseBtn">Pause</button>
+  <button id="clearBtn">Clear</button>
+  <span class="counter" id="counter">0 events · 0/s</span>
+</div>
+<div id="log"></div>
+
+<script>
+const API = 'http://localhost:5003';
+let paused = false, typeFilter = 'all';
+let totalEvents = 0, epsCount = 0;
+const MAX_ROWS = 600;
+
+const dot = document.getElementById('dot');
+const statusTxt = document.getElementById('statusTxt');
+const log = document.getElementById('log');
+const counter = document.getElementById('counter');
+
+function setStatus(ok) {
+  dot.className = 'dot ' + (ok ? 'live' : 'dead');
+  statusTxt.textContent = ok ? 'Connected' : 'Disconnected';
+}
+
+// Eps counter
+setInterval(() => {
+  counter.textContent = `${totalEvents} events · ${epsCount}/s`;
+  epsCount = 0;
+}, 1000);
+
+// Filter buttons
+document.querySelectorAll('[data-type]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('[data-type]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    typeFilter = btn.dataset.type;
+  });
+});
+
+document.getElementById('pauseBtn').addEventListener('click', function() {
+  paused = !paused;
+  this.textContent = paused ? 'Resume' : 'Pause';
+  this.classList.toggle('active', paused);
+});
+
+document.getElementById('clearBtn').addEventListener('click', () => { log.innerHTML = ''; });
+
+function addEvent(type, data) {
+  if (paused) return;
+  if (typeFilter !== 'all' && typeFilter !== type) return;
+
+  totalEvents++;
+  epsCount++;
+
+  const now = new Date().toLocaleTimeString();
+  const isLive = data?.meta?.state === 'STARTED' || data?.live;
+  const matchName = data?.meta?.name || data?.meta?.player_a + ' vs ' + data?.meta?.player_b || `Match ${data?.match_id || ''}`;
+  const oddsSummary = data?.odds ? Object.entries(data.odds).map(([k,v]) => `${k}:${typeof v === 'number' ? v.toFixed(2) : v}`).join(' ') : '';
+
+  const el = document.createElement('div');
+  el.className = `event${isLive ? ' live-ev' : ''}`;
+  el.innerHTML = `<span class="ts">${now}</span><span class="badge ${type}">${type.toUpperCase()}</span><span class="body"><strong>${matchName}</strong> ${oddsSummary}</span>`;
+  log.insertBefore(el, log.firstChild);
+
+  // Prune
+  while (log.children.length > MAX_ROWS) log.lastChild?.remove();
+}
+
+// SSE
+let retryDelay = 1000;
+function connectSSE() {
+  const sse = new EventSource(`${API}/stream`);
+  sse.addEventListener('snapshot', e => {
+    try { addEvent('snapshot', JSON.parse(e.data)); } catch(_) {}
+    setStatus(true);
+    retryDelay = 1000;
+  });
+  sse.addEventListener('message', e => {
+    if (!e.data) return;
+    try { addEvent('price', JSON.parse(e.data)); } catch(_) {}
+    setStatus(true);
+  });
+  sse.onerror = () => {
+    sse.close();
+    setStatus(false);
+    retryDelay = Math.min(retryDelay * 2, 30000);
+    setTimeout(connectSSE, retryDelay);
+  };
+}
+
+connectSSE();
+</script>
+</body>
+</html>

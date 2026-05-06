@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PMU SPORT — Tennis Odds</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --card: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --text-dim: #8b949e;
+    --green: #3fb950;
+    --red: #f85149;
+    --blue: #58a6ff;
+    --orange: #d2991d;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 16px; }
+  .header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+  .header h1 { font-size: 20px; font-weight: 600; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+  .status-dot.live { background: var(--green); animation: pulse 2s infinite; }
+  .status-dot.error { background: var(--red); }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+  .controls input, .controls select, .controls button {
+    background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; font-size: 13px;
+  }
+  .controls input { flex: 1; min-width: 200px; }
+  .filter-btn { cursor: pointer; }
+  .filter-btn.active { background: var(--blue); border-color: var(--blue); color: #fff; }
+  .stats { color: var(--text-dim); font-size: 12px; margin-bottom: 12px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 12px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
+  .card.live { border-left: 3px solid var(--red); }
+  .card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+  .card-title { font-weight: 600; font-size: 14px; }
+  .card-comp { font-size: 12px; color: var(--text-dim); }
+  .live-badge { background: var(--red); color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 4px; font-weight: 700; text-transform: uppercase; }
+  .score-bar { font-size: 13px; margin-bottom: 8px; padding: 6px 8px; background: #1a1f2b; border-radius: 4px; }
+  .score-sets { display: flex; gap: 12px; font-family: 'SF Mono', 'Fira Mono', monospace; }
+  .score-game { color: var(--orange); margin-left: 8px; }
+  .serve-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); display: inline-block; margin-left: 4px; }
+  .odds-table { width: 100%; border-collapse: collapse; }
+  .odds-table th { font-size: 11px; color: var(--text-dim); text-align: left; padding: 4px 0; font-weight: 500; }
+  .odds-table td { padding: 4px 4px 4px 0; font-size: 13px; font-family: 'SF Mono', 'Fira Mono', monospace; }
+  .odd-cell { display: inline-block; padding: 3px 8px; border-radius: 4px; transition: background 0.3s; }
+  .odd-up { background: rgba(63,185,80,0.2); color: var(--green); }
+  .odd-down { background: rgba(248,81,73,0.2); color: var(--red); }
+  .odd-new { background: rgba(88,166,255,0.15); color: var(--blue); }
+  .odd-steady { color: var(--text); }
+  .trend-up::after { content: ' ▲'; font-size: 10px; color: var(--green); }
+  .trend-down::after { content: ' ▼'; font-size: 10px; color: var(--red); }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>🎾 PMU SPORT — Tennis Odds</h1>
+  <div>
+    <span class="status-dot" id="statusDot"></span>
+    <span id="statusText" style="font-size:13px;color:var(--text-dim)">Connecting...</span>
+  </div>
+</div>
+<div class="controls">
+  <input type="text" id="search" placeholder="Search by player or tournament...">
+  <button class="filter-btn active" data-filter="all">All</button>
+  <button class="filter-btn" data-filter="live">Live</button>
+  <button class="filter-btn" data-filter="prematch">Upcoming</button>
+</div>
+<div class="stats" id="stats"></div>
+<div class="grid" id="grid"></div>
+
+<script>
+const API = 'http://localhost:5003';
+let meta = {}, prices = {}, movements = {}, scores = {};
+let filter = 'all', search = '';
+
+// ── SSE connection ────────────────────────────────────────────
+let retryDelay = 1000;
+function connectSSE() {
+  const sse = new EventSource(`${API}/stream`);
+  sse.addEventListener('snapshot', e => {
+    const data = JSON.parse(e.data);
+    if (data.prices) prices = data.prices;
+    for (const [mid, mkts] of Object.entries(prices)) {
+      for (const [mkt, odds] of Object.entries(mkts)) {
+        for (const [sel, odd] of Object.entries(odds)) {
+          const k = `${mid}|${mkt}|${sel}`;
+          if (!(k in movements)) movements[k] = 'steady';
+        }
+      }
+    }
+    render();
+    setStatus(true);
+    retryDelay = 1000;
+  });
+  sse.addEventListener('message', e => {
+    if (!e.data) return;
+    try {
+      const d = JSON.parse(e.data);
+      if (d.type !== 'price') return;
+      const mid = String(d.match_id);
+      if (!prices[mid]) prices[mid] = {};
+      prices[mid][d.market] = d.odds;
+      for (const [sel, odd] of Object.entries(d.odds)) {
+        const k = `${mid}|${d.market}|${sel}`;
+        movements[k] = d.movements?.[sel] || 'steady';
+      }
+      if (d.meta) meta[mid] = d.meta;
+      if (d.score) scores[mid] = d.score;
+      render();
+      setStatus(true);
+    } catch(_) {}
+  });
+  sse.onerror = () => {
+    sse.close();
+    setStatus(false);
+    retryDelay = Math.min(retryDelay * 2, 30000);
+    setTimeout(connectSSE, retryDelay);
+  };
+}
+
+function setStatus(ok) {
+  const dot = document.getElementById('statusDot');
+  const txt = document.getElementById('statusText');
+  dot.className = 'status-dot ' + (ok ? 'live' : 'error');
+  txt.textContent = ok ? 'Live' : 'Disconnected — reconnecting...';
+}
+
+// ── REST bootstrap ─────────────────────────────────────────────
+async function bootstrap() {
+  try {
+    const [mr, pr] = await Promise.all([
+      fetch(`${API}/markets`).then(r => r.json()),
+      fetch(`${API}/prices`).then(r => r.json()),
+    ]);
+    for (const m of (mr.matches || [])) meta[String(m.match_id)] = m;
+    prices = pr;
+    for (const [mid, mkts] of Object.entries(prices)) {
+      for (const [mkt, odds] of Object.entries(mkts)) {
+        for (const sel of Object.keys(odds)) {
+          movements[`${mid}|${mkt}|${sel}`] = 'steady';
+        }
+      }
+    }
+    render();
+  } catch(_) {}
+}
+
+// ── Render ─────────────────────────────────────────────────────
+function render() {
+  const grid = document.getElementById('grid');
+  let matches = Object.entries(prices).map(([mid, mkts]) => {
+    const m = meta[mid] || {};
+    const isLive = m.state === 'STARTED' || m.live;
+    return { mid, mkts, meta: m, live: isLive };
+  });
+
+  // Filter
+  if (filter === 'live') matches = matches.filter(m => m.live);
+  else if (filter === 'prematch') matches = matches.filter(m => !m.live);
+
+  // Search
+  if (search) {
+    const q = search.toLowerCase();
+    matches = matches.filter(m =>
+      (m.meta.name || '').toLowerCase().includes(q) ||
+      (m.meta.competition || '').toLowerCase().includes(q) ||
+      (m.meta.player_a || '').toLowerCase().includes(q) ||
+      (m.meta.player_b || '').toLowerCase().includes(q)
+    );
+  }
+
+  // Sort: live first, then by start time
+  matches.sort((a, b) => {
+    if (a.live !== b.live) return a.live ? -1 : 1;
+    return (a.meta.start_time || '') > (b.meta.start_time || '') ? 1 : -1;
+  });
+
+  grid.innerHTML = matches.map(({mid, mkts, meta: m, live}) => {
+    const score = scores[mid];
+    let scoreHTML = '';
+    if (live && score) {
+      const sh = score.sets_home || [];
+      const sa = score.sets_away || [];
+      const setStrs = [];
+      for (let i = 0; i < Math.max(sh.length, sa.length); i++) {
+        const h = sh[i] !== undefined && sh[i] >= 0 ? sh[i] : '-';
+        const a = sa[i] !== undefined && sa[i] >= 0 ? sa[i] : '-';
+        setStrs.push(`${h}-${a}`);
+      }
+      const serve = score.home_serve ? '<span class="serve-dot" title="Home serving"></span>' : '';
+      scoreHTML = `<div class="score-bar">
+        <div class="score-sets">${setStrs.map(s => `<span>${s}</span>`).join('')}<span class="score-game">${score.home || '0'}-${score.away || '0'}</span>${serve}</div>
+      </div>`;
+    }
+
+    const mainMarket = mkts['Match Odds'] || mkts['Full Time'] || Object.values(mkts)[0];
+    const oddsRows = Object.entries(mkts).slice(0, 4).map(([mkt, odds]) => {
+      const cells = Object.entries(odds).map(([sel, odd]) => {
+        const mv = movements[`${mid}|${mkt}|${sel}`] || 'steady';
+        const cls = `odd-cell odd-${mv} trend-${mv}`;
+        return `<span class="${cls}">${sel}: <strong>${odd.toFixed(2)}</strong></span>`;
+      }).join(' ');
+      return `<div style="font-size:12px;color:var(--text-dim);margin-bottom:2px">${mkt}</div><div style="margin-bottom:6px">${cells}</div>`;
+    }).join('');
+
+    return `<div class="card${live ? ' live' : ''}">
+      <div class="card-header">
+        <div>
+          <div class="card-title">${m.player_a || '?'} vs ${m.player_b || '?'}</div>
+          <div class="card-comp">${m.competition || 'Unknown'} — ${m.start_time ? new Date(m.start_time).toLocaleString() : 'TBD'}</div>
+        </div>
+        ${live ? '<span class="live-badge">LIVE</span>' : ''}
+      </div>
+      ${scoreHTML}
+      ${oddsRows}
+    </div>`;
+  }).join('');
+
+  document.getElementById('stats').textContent =
+    `${matches.length} matches · ${matches.filter(m => m.live).length} live · Updated: ${new Date().toLocaleTimeString()}`;
+}
+
+// ── Controls ───────────────────────────────────────────────────
+document.getElementById('search').addEventListener('input', e => {
+  search = e.target.value;
+  render();
+});
+document.querySelectorAll('.filter-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    filter = btn.dataset.filter;
+    render();
+  });
+});
+
+// ── Status poll ────────────────────────────────────────────────
+setInterval(async () => {
+  try {
+    const r = await fetch(`${API}/status`);
+    const s = await r.json();
+    document.getElementById('stats').textContent +=
+      ` · ${s.sse_clients} clients · ${s.sse_updates_pushed} updates`;
+  } catch(_) {}
+}, 5000);
+
+// ── Init ───────────────────────────────────────────────────────
+bootstrap().then(() => connectSSE());
+</script>
+</body>
+</html>

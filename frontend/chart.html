@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PMU SPORT — Odds Chart</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117; --card: #161b22; --border: #30363d;
+    --text: #c9d1d9; --text-dim: #8b949e; --green: #3fb950; --red: #f85149; --blue: #58a6ff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 16px; display: flex; gap: 16px; height: 100vh; }
+  .sidebar { width: 300px; flex-shrink: 0; overflow-y: auto; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+  .sidebar h2 { font-size: 16px; margin-bottom: 8px; }
+  .sidebar input { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; font-size: 13px; margin-bottom: 8px; }
+  .match-item { padding: 8px; border-radius: 4px; cursor: pointer; font-size: 13px; border: 1px solid transparent; margin-bottom: 4px; }
+  .match-item:hover { border-color: var(--border); }
+  .match-item.selected { background: rgba(88,166,255,0.1); border-color: var(--blue); }
+  .match-item .live-dot { width: 6px; height: 6px; background: var(--red); border-radius: 50%; display: inline-block; margin-right: 4px; }
+  .main { flex: 1; display: flex; flex-direction: column; gap: 12px; }
+  .chart-container { flex: 1; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px; position: relative; }
+  .info-bar { display: flex; gap: 16px; font-size: 13px; flex-wrap: wrap; }
+  .info-stat { padding: 6px 12px; background: var(--card); border: 1px solid var(--border); border-radius: 6px; }
+  .info-stat .label { color: var(--text-dim); font-size: 11px; }
+  .info-stat .value { font-weight: 600; font-family: 'SF Mono', 'Fira Mono', monospace; }
+  .controls-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .controls-row select, .controls-row button {
+    background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; font-size: 13px; cursor: pointer;
+  }
+  .controls-row button.active { background: var(--blue); border-color: var(--blue); color: #fff; }
+  .sel-pills { display: flex; gap: 6px; flex-wrap: wrap; }
+  .sel-pill { padding: 4px 10px; border-radius: 12px; font-size: 12px; border: 1px solid var(--border); cursor: pointer; background: var(--card); color: var(--text-dim); }
+  .sel-pill.selected { background: var(--blue); border-color: var(--blue); color: #fff; }
+  .debug { font-size: 11px; color: var(--text-dim); font-family: 'SF Mono', 'Fira Mono', monospace; }
+  #noData { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); color: var(--text-dim); font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="sidebar">
+  <h2>Matches</h2>
+  <input type="text" id="matchSearch" placeholder="Search...">
+  <div id="matchList"></div>
+</div>
+<div class="main">
+  <div class="controls-row" id="controls">
+    <select id="marketSelect"></select>
+    <select id="windowSelect">
+      <option value="300">5 min</option>
+      <option value="900">15 min</option>
+      <option value="3600">1 hour</option>
+      <option value="86400">24 hours</option>
+      <option value="0">All</option>
+    </select>
+    <div class="sel-pills" id="selPills"></div>
+  </div>
+  <div class="chart-container">
+    <canvas id="chart"></canvas>
+    <div id="noData">Select a match, market, and selection to view price history</div>
+  </div>
+  <div class="info-bar" id="infoBar"></div>
+  <div class="debug" id="debug"></div>
+</div>
+
+<script>
+const API = 'http://localhost:5003';
+let meta = {}, prices = {};
+let chart = null, selectedMatch = null, selectedMarket = null, selectedSelection = null;
+let livePoints = []; // points accumulated from SSE since last history fetch
+
+// ── Bootstrap ──────────────────────────────────────────────────
+async function bootstrap() {
+  try {
+    const [mr, pr] = await Promise.all([
+      fetch(`${API}/markets`).then(r => r.json()),
+      fetch(`${API}/prices`).then(r => r.json()),
+    ]);
+    for (const m of (mr.matches || [])) meta[String(m.match_id)] = m;
+    prices = pr;
+    renderMatchList();
+  } catch(e) { console.error(e); }
+}
+
+function renderMatchList(filter = '') {
+  const list = document.getElementById('matchList');
+  const q = filter.toLowerCase();
+  const items = Object.entries(meta)
+    .filter(([,m]) => !q || m.name?.toLowerCase().includes(q) || m.competition?.toLowerCase().includes(q))
+    .sort((a,b) => {
+      const aLive = a[1].state === 'STARTED', bLive = b[1].state === 'STARTED';
+      if (aLive !== bLive) return aLive ? -1 : 1;
+      return (a[1].start_time||'') > (b[1].start_time||'') ? 1 : -1;
+    });
+
+  list.innerHTML = items.map(([mid, m]) => {
+    const live = m.state === 'STARTED';
+    const sel = selectedMatch === mid ? ' selected' : '';
+    return `<div class="match-item${sel}" data-mid="${mid}">
+      ${live ? '<span class="live-dot"></span>' : ''}${m.player_a || '?'} vs ${m.player_b || '?'}
+      <div style="font-size:11px;color:var(--text-dim)">${m.competition || ''}</div>
+    </div>`;
+  }).join('');
+
+  document.querySelectorAll('.match-item').forEach(el => {
+    el.addEventListener('click', () => selectMatch(el.dataset.mid));
+  });
+}
+
+document.getElementById('matchSearch').addEventListener('input', e => renderMatchList(e.target.value));
+
+// ── Match selection ────────────────────────────────────────────
+function selectMatch(mid) {
+  selectedMatch = mid;
+  selectedMarket = null;
+  selectedSelection = null;
+  livePoints = [];
+  destroyChart();
+
+  const mkts = prices[mid] || {};
+  const mktNames = Object.keys(mkts);
+  const sel = document.getElementById('marketSelect');
+  sel.innerHTML = mktNames.map(n => `<option>${n}</option>`).join('');
+  if (mktNames.length) {
+    selectedMarket = mktNames[0];
+    updateSelPills();
+  }
+
+  renderMatchList(document.getElementById('matchSearch').value);
+  if (mktNames.length) fetchHistory();
+}
+
+document.getElementById('marketSelect').addEventListener('change', function() {
+  selectedMarket = this.value;
+  selectedSelection = null;
+  livePoints = [];
+  updateSelPills();
+  destroyChart();
+  fetchHistory();
+});
+
+document.getElementById('windowSelect').addEventListener('change', () => {
+  if (selectedSelection) fetchHistory();
+});
+
+function updateSelPills() {
+  const mkts = prices[selectedMatch] || {};
+  const odds = mkts[selectedMarket] || {};
+  const container = document.getElementById('selPills');
+  container.innerHTML = Object.keys(odds).map(sel => {
+    const cls = selectedSelection === sel ? ' selected' : '';
+    return `<span class="sel-pill${cls}" data-sel="${sel}">${sel}: ${odds[sel].toFixed(2)}</span>`;
+  }).join('');
+  container.querySelectorAll('.sel-pill').forEach(pill => {
+    pill.addEventListener('click', () => {
+      selectedSelection = pill.dataset.sel;
+      livePoints = [];
+      updateSelPills();
+      fetchHistory();
+    });
+  });
+}
+
+// ── Chart ──────────────────────────────────────────────────────
+function destroyChart() {
+  if (chart) { chart.destroy(); chart = null; }
+  document.getElementById('noData').style.display = 'block';
+  document.getElementById('infoBar').innerHTML = '';
+}
+
+async function fetchHistory() {
+  if (!selectedMatch || !selectedMarket || !selectedSelection) return;
+
+  const windowS = parseInt(document.getElementById('windowSelect').value) || 86400;
+  const limit = windowS > 0 ? 2000 : 500;
+
+  try {
+    const r = await fetch(`${API}/history?match_id=${selectedMatch}&selection=${encodeURIComponent(selectedSelection)}&market=${encodeURIComponent(selectedMarket)}&limit=${limit}`);
+    const data = await r.json();
+    let points = data.points || [];
+
+    // Apply time window filter
+    if (windowS > 0) {
+      const cutoff = Date.now() / 1000 - windowS;
+      points = points.filter(p => p.ts >= cutoff);
+    }
+
+    // Merge live points
+    const merged = [...points, ...livePoints.filter(lp => !points.some(p => Math.abs(p.ts - lp.ts) < 0.1))];
+    merged.sort((a, b) => a.ts - b.ts);
+
+    drawChart(merged);
+  } catch(e) {
+    document.getElementById('debug').textContent = 'History fetch error: ' + e.message;
+  }
+}
+
+function drawChart(points) {
+  destroyChart();
+  document.getElementById('noData').style.display = points.length ? 'none' : 'block';
+  if (!points.length) return;
+
+  const ctx = document.getElementById('chart').getContext('2d');
+  const labels = points.map(p => new Date(p.ts * 1000));
+  const values = points.map(p => p.odd);
+
+  chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: `${selectedSelection} — ${selectedMarket}`,
+        data: values,
+        borderColor: '#58a6ff',
+        backgroundColor: 'rgba(88,166,255,0.1)',
+        fill: true,
+        pointRadius: points.length <= 5 ? 4 : points.length <= 30 ? 2 : 0,
+        pointBackgroundColor: '#58a6ff',
+        borderWidth: 1.5,
+        tension: 0.1,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: {
+          type: 'time',
+          time: { unit: 'minute', displayFormats: { minute: 'HH:mm' } },
+          grid: { color: 'rgba(48,54,61,0.5)' },
+          ticks: { color: '#8b949e', maxTicksLimit: 15 },
+        },
+        y: {
+          grid: { color: 'rgba(48,54,61,0.5)' },
+          ticks: { color: '#8b949e' },
+        },
+      },
+      plugins: {
+        legend: { labels: { color: '#c9d1d9' } },
+      },
+      interaction: { intersect: false, mode: 'index' },
+    },
+  });
+
+  // Info bar
+  const current = values[values.length - 1];
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const delta = current - values[0];
+  const deltaCls = delta > 0 ? 'var(--green)' : delta < 0 ? 'var(--red)' : 'var(--text)';
+  document.getElementById('infoBar').innerHTML = `
+    <div class="info-stat"><div class="label">Current</div><div class="value">${current.toFixed(2)}</div></div>
+    <div class="info-stat"><div class="label">Min</div><div class="value">${min.toFixed(2)}</div></div>
+    <div class="info-stat"><div class="label">Max</div><div class="value">${max.toFixed(2)}</div></div>
+    <div class="info-stat"><div class="label">Delta</div><div class="value" style="color:${deltaCls}">${delta >= 0 ? '+' : ''}${delta.toFixed(2)}</div></div>
+    <div class="info-stat"><div class="label">Points</div><div class="value">${points.length}</div></div>
+  `;
+}
+
+// ── SSE live updates ───────────────────────────────────────────
+let retryDelay = 1000;
+function connectSSE() {
+  const sse = new EventSource(`${API}/stream`);
+  sse.addEventListener('snapshot', e => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.prices) {
+        prices = data.prices;
+        // Refresh market list if needed
+        if (selectedMatch && prices[selectedMatch]) {
+          const mkts = prices[selectedMatch];
+          const sel = document.getElementById('marketSelect');
+          if (sel.innerHTML === '') {
+            sel.innerHTML = Object.keys(mkts).map(n => `<option>${n}</option>`).join('');
+            if (!selectedMarket) selectedMarket = Object.keys(mkts)[0];
+          }
+          updateSelPills();
+        }
+      }
+    } catch(_) {}
+    retryDelay = 1000;
+  });
+  sse.addEventListener('message', e => {
+    if (!e.data) return;
+    try {
+      const d = JSON.parse(e.data);
+      if (d.type !== 'price') return;
+      const mid = String(d.match_id);
+      if (mid === selectedMatch && d.market === selectedMarket && selectedSelection && d.odds?.[selectedSelection] !== undefined) {
+        const pt = { ts: d.ts, match_id: d.match_id, market: d.market, selection: selectedSelection, odd: d.odds[selectedSelection] };
+        livePoints.push(pt);
+        // Keep only last 50 live points in buffer
+        if (livePoints.length > 50) livePoints = livePoints.slice(-50);
+        // Add point to chart if it exists
+        if (chart) {
+          const label = new Date(d.ts * 1000);
+          chart.data.labels.push(label);
+          chart.data.datasets[0].data.push(d.odds[selectedSelection]);
+          // Keep at most 500 points on chart
+          if (chart.data.labels.length > 500) {
+            chart.data.labels.shift();
+            chart.data.datasets[0].data.shift();
+          }
+          chart.update('none');
+          // Update info bar min/max
+          const vals = chart.data.datasets[0].data;
+          const cur = vals[vals.length - 1];
+          const mn = Math.min(...vals);
+          const mx = Math.max(...vals);
+          const dlt = cur - vals[0];
+          const dCls = dlt > 0 ? 'var(--green)' : dlt < 0 ? 'var(--red)' : 'var(--text)';
+          document.getElementById('infoBar').innerHTML = `
+            <div class="info-stat"><div class="label">Current</div><div class="value">${cur.toFixed(2)}</div></div>
+            <div class="info-stat"><div class="label">Min</div><div class="value">${mn.toFixed(2)}</div></div>
+            <div class="info-stat"><div class="label">Max</div><div class="value">${mx.toFixed(2)}</div></div>
+            <div class="info-stat"><div class="label">Delta</div><div class="value" style="color:${dCls}">${dlt >= 0 ? '+' : ''}${dlt.toFixed(2)}</div></div>
+            <div class="info-stat"><div class="label">Points</div><div class="value">${vals.length}</div></div>
+          `;
+        }
+      }
+      // Update prices in memory
+      if (prices[mid]) {
+        prices[mid][d.market] = d.odds;
+        if (mid === selectedMatch && d.market === selectedMarket) updateSelPills();
+      }
+      // Update meta
+      if (d.meta && mid) meta[mid] = d.meta;
+    } catch(_) {}
+    document.getElementById('debug').textContent = `Live · ${new Date().toLocaleTimeString()} · SSE connected`;
+  });
+  sse.onerror = () => {
+    sse.close();
+    document.getElementById('debug').textContent = 'SSE disconnected — reconnecting...';
+    retryDelay = Math.min(retryDelay * 2, 30000);
+    setTimeout(connectSSE, retryDelay);
+  };
+}
+
+// ── Init ───────────────────────────────────────────────────────
+bootstrap().then(() => connectSSE());
+// Refresh match list periodically
+setInterval(bootstrap, 30000);
+</script>
+</body>
+</html>
