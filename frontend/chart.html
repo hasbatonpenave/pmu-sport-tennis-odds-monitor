@@ -4,343 +4,309 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PMU SPORT — Odds Chart</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 <style>
   :root {
-    --bg: #0d1117; --card: #161b22; --border: #30363d;
-    --text: #c9d1d9; --text-dim: #8b949e; --green: #3fb950; --red: #f85149; --blue: #58a6ff;
+    --bg:#060a0f; --bg2:#0c1420; --bg3:#111d2e; --border:#1a2e45;
+    --accent:#00d4aa; --text:#8ab4d4; --text-hi:#cde4f7; --green:#00e676; --red:#ff4f4f;
   }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 16px; display: flex; gap: 16px; height: 100vh; }
-  .sidebar { width: 300px; flex-shrink: 0; overflow-y: auto; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
-  .sidebar h2 { font-size: 16px; margin-bottom: 8px; }
-  .sidebar input { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; font-size: 13px; margin-bottom: 8px; }
-  .match-item { padding: 8px; border-radius: 4px; cursor: pointer; font-size: 13px; border: 1px solid transparent; margin-bottom: 4px; }
-  .match-item:hover { border-color: var(--border); }
-  .match-item.selected { background: rgba(88,166,255,0.1); border-color: var(--blue); }
-  .match-item .live-dot { width: 6px; height: 6px; background: var(--red); border-radius: 50%; display: inline-block; margin-right: 4px; }
-  .main { flex: 1; display: flex; flex-direction: column; gap: 12px; }
-  .chart-container { flex: 1; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px; position: relative; }
-  .info-bar { display: flex; gap: 16px; font-size: 13px; flex-wrap: wrap; }
-  .info-stat { padding: 6px 12px; background: var(--card); border: 1px solid var(--border); border-radius: 6px; }
-  .info-stat .label { color: var(--text-dim); font-size: 11px; }
-  .info-stat .value { font-weight: 600; font-family: 'SF Mono', 'Fira Mono', monospace; }
-  .controls-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-  .controls-row select, .controls-row button {
-    background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; font-size: 13px; cursor: pointer;
+  *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
+  body {
+    background:var(--bg); color:var(--text);
+    font-family:'Fira Mono','Cascadia Code','Consolas',monospace;
+    font-size:12px; min-height:100vh;
+    display:flex; flex-direction:column;
   }
-  .controls-row button.active { background: var(--blue); border-color: var(--blue); color: #fff; }
-  .sel-pills { display: flex; gap: 6px; flex-wrap: wrap; }
-  .sel-pill { padding: 4px 10px; border-radius: 12px; font-size: 12px; border: 1px solid var(--border); cursor: pointer; background: var(--card); color: var(--text-dim); }
-  .sel-pill.selected { background: var(--blue); border-color: var(--blue); color: #fff; }
-  .debug { font-size: 11px; color: var(--text-dim); font-family: 'SF Mono', 'Fira Mono', monospace; }
-  #noData { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); color: var(--text-dim); font-size: 14px; }
+  ::-webkit-scrollbar { width:5px; }
+  ::-webkit-scrollbar-track { background:transparent; }
+  ::-webkit-scrollbar-thumb { background:#2a4060; border-radius:3px; }
+
+  .topbar {
+    position:sticky; top:0; z-index:100; flex-shrink:0;
+    background:var(--bg2); border-bottom:1px solid var(--border);
+    padding:10px 16px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+  }
+  .logo { color:var(--accent); font-weight:700; font-size:13px; letter-spacing:0.07em; }
+  .logo span { color:var(--text); font-weight:400; }
+  .ctrl {
+    background:var(--bg3); color:var(--text); border:1px solid var(--border);
+    padding:5px 10px; border-radius:4px; font:11px 'Fira Mono','Cascadia Code','Consolas',monospace;
+    outline:none;
+  }
+  .ctrl:focus, .ctrl:hover { border-color:var(--accent); }
+  .main-layout { flex:1; display:flex; overflow:hidden; }
+  .sidebar {
+    width:280px; flex-shrink:0; overflow-y:auto;
+    background:var(--bg2); border-right:1px solid var(--border); padding:10px;
+  }
+  .sidebar h2 { font-size:13px; font-weight:600; color:var(--text-hi); margin-bottom:8px; }
+  .match-item {
+    padding:8px; border-radius:4px; cursor:pointer; font-size:11px;
+    border-left:2px solid transparent; transition:background .12s; margin-bottom:2px;
+  }
+  .match-item:hover { background:rgba(0,212,170,.03); }
+  .match-item.selected { border-left-color:var(--accent); background:rgba(0,212,170,.04); }
+  .match-item .mi-name { color:var(--text-hi); font-weight:600; }
+  .match-item .mi-info { font-size:10px; color:#3a6080; }
+  .live-dot { width:6px; height:6px; background:var(--red); border-radius:50%; display:inline-block; margin-right:4px; }
+
+  .main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
+  .toolbar {
+    flex-shrink:0; padding:8px 16px; background:var(--bg2);
+    border-bottom:1px solid var(--border); display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+  }
+  .pill {
+    background:var(--bg3); color:var(--text); border:1px solid var(--border);
+    padding:4px 10px; border-radius:4px; font:11px 'Fira Mono','Cascadia Code','Consolas',monospace;
+    cursor:pointer; transition:border-color .15s,background .12s;
+  }
+  .pill:hover { border-color:var(--accent); }
+  .pill.active { border-color:var(--accent); color:var(--accent); background:rgba(0,212,170,.06); }
+
+  .chart-wrap { flex:1; padding:10px; position:relative; }
+  .info-bar {
+    flex-shrink:0; padding:8px 16px; background:var(--bg2); border-top:1px solid var(--border);
+    display:flex; gap:16px; flex-wrap:wrap;
+  }
+  .info-stat { font-size:11px; }
+  .info-stat .lbl { color:#3a6080; font-size:9px; text-transform:uppercase; }
+  .info-stat .val { color:var(--text-hi); font-weight:600; }
+  .empty-state { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:#3a6080; font-size:13px; }
 </style>
 </head>
 <body>
-<div class="sidebar">
-  <h2>Matches</h2>
-  <input type="text" id="matchSearch" placeholder="Search...">
-  <div id="matchList"></div>
+
+<div class="topbar">
+  <div class="logo">PMU<span> / Odds Chart</span></div>
+  <input class="ctrl" id="url" value="http://localhost:5500" placeholder="API URL" style="flex:1;min-width:200px">
+  <button class="ctrl" onclick="reload()" style="cursor:pointer">Reload</button>
 </div>
-<div class="main">
-  <div class="controls-row" id="controls">
-    <select id="marketSelect"></select>
-    <select id="windowSelect">
-      <option value="300">5 min</option>
-      <option value="900">15 min</option>
-      <option value="3600">1 hour</option>
-      <option value="86400">24 hours</option>
-      <option value="0">All</option>
-    </select>
-    <div class="sel-pills" id="selPills"></div>
+
+<div class="main-layout">
+  <div class="sidebar">
+    <h2>Tennis Matches</h2>
+    <div id="loading">Loading matches...</div>
   </div>
-  <div class="chart-container">
-    <canvas id="chart"></canvas>
-    <div id="noData">Select a match, market, and selection to view price history</div>
+  <div class="main">
+    <div class="toolbar">
+      <div id="selPills" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+      <span style="flex:1"></span>
+      <button class="pill time-pill active" data-m="5">5m</button>
+      <button class="pill time-pill" data-m="15">15m</button>
+      <button class="pill time-pill" data-m="60">1h</button>
+      <button class="pill time-pill" data-m="360">6h</button>
+      <button class="pill time-pill" data-m="0">All</button>
+    </div>
+    <div class="chart-wrap" id="chartWrap">
+      <div class="empty-state" id="noData">Select a match and player to view price history</div>
+      <canvas id="chart" style="display:none"></canvas>
+    </div>
+    <div class="info-bar" id="infoBar"></div>
   </div>
-  <div class="info-bar" id="infoBar"></div>
-  <div class="debug" id="debug"></div>
 </div>
 
 <script>
-const API = 'http://localhost:5500';
-let meta = {}, prices = {};
-let chart = null, selectedMatch = null, selectedMarket = null, selectedSelection = null;
-let livePoints = []; // points accumulated from SSE since last history fetch
+const API = () => document.getElementById('url').value.trim();
+let chart = null, matchMeta = {}, livePoints = [];
+let selMatch = null, selPlayer = null, selMarket = 'Match Odds', timeMins = 5;
+let es = null;
 
-// ── Bootstrap ──────────────────────────────────────────────────
-async function bootstrap() {
+function reload() { selMatch = null; selPlayer = null; livePoints = []; if(es) es.close(); destroyChart(); loadMatches(); }
+
+async function loadMatches() {
+  const l = document.getElementById('loading');
+  l.textContent = 'Loading matches...';
   try {
     const [mr, pr] = await Promise.all([
-      fetch(`${API}/markets`).then(r => r.json()),
-      fetch(`${API}/prices`).then(r => r.json()),
+      fetch(API()+'/markets').then(r=>r.json()),
+      fetch(API()+'/prices').then(r=>r.json()),
     ]);
-    for (const m of (mr.matches || [])) meta[String(m.match_id)] = m;
-    prices = pr;
-    renderMatchList();
-  } catch(e) { console.error(e); }
+    for (const m of (mr.matches||[])) matchMeta[String(m.match_id)] = m;
+    renderSidebar();
+    if (!Object.keys(matchMeta).length) l.textContent = 'No matches yet. Start the server.';
+  } catch(e) { l.textContent = 'Error: ' + e.message; }
 }
 
-function renderMatchList(filter = '') {
-  const list = document.getElementById('matchList');
-  const q = filter.toLowerCase();
-  const items = Object.entries(meta)
-    .filter(([,m]) => !q || m.name?.toLowerCase().includes(q) || m.competition?.toLowerCase().includes(q))
-    .sort((a,b) => {
-      const aLive = a[1].state === 'STARTED', bLive = b[1].state === 'STARTED';
-      if (aLive !== bLive) return aLive ? -1 : 1;
-      return (a[1].start_time||'') > (b[1].start_time||'') ? 1 : -1;
-    });
-
-  list.innerHTML = items.map(([mid, m]) => {
+function renderSidebar() {
+  const cont = document.getElementById('loading').parentNode;
+  const items = Object.entries(matchMeta)
+    .sort((a,b) => (a[1].state==='STARTED' ? -1 : 1) - (b[1].state==='STARTED' ? -1 : 1));
+  let html = '';
+  for (const [mid, m] of items) {
     const live = m.state === 'STARTED';
-    const sel = selectedMatch === mid ? ' selected' : '';
-    return `<div class="match-item${sel}" data-mid="${mid}">
-      ${live ? '<span class="live-dot"></span>' : ''}${m.player_a || '?'} vs ${m.player_b || '?'}
-      <div style="font-size:11px;color:var(--text-dim)">${m.competition || ''}</div>
-    </div>`;
-  }).join('');
-
-  document.querySelectorAll('.match-item').forEach(el => {
+    const sel = selMatch === mid ? ' selected' : '';
+    html += '<div class="match-item'+sel+'" data-mid="'+mid+'">'
+      + '<div class="mi-name">' + (live?'<span class="live-dot"></span>':'') + (m.player_a||'?') + ' vs ' + (m.player_b||'?') + '</div>'
+      + '<div class="mi-info">' + (m.competition||'') + ' · ' + (m.start_time ? new Date(m.start_time).toLocaleDateString() : '') + '</div>'
+      + '</div>';
+  }
+  cont.innerHTML = '<h2>Tennis Matches</h2>' + html;
+  cont.querySelectorAll('.match-item').forEach(el => {
     el.addEventListener('click', () => selectMatch(el.dataset.mid));
   });
 }
 
-document.getElementById('matchSearch').addEventListener('input', e => renderMatchList(e.target.value));
-
-// ── Match selection ────────────────────────────────────────────
 function selectMatch(mid) {
-  selectedMatch = mid;
-  selectedMarket = null;
-  selectedSelection = null;
-  livePoints = [];
+  selMatch = mid; selPlayer = null; livePoints = [];
   destroyChart();
-
-  const mkts = prices[mid] || {};
-  const mktNames = Object.keys(mkts);
-  const sel = document.getElementById('marketSelect');
-  sel.innerHTML = mktNames.map(n => `<option>${n}</option>`).join('');
-  if (mktNames.length) {
-    selectedMarket = mktNames[0];
-    updateSelPills();
-  }
-
-  renderMatchList(document.getElementById('matchSearch').value);
-  if (mktNames.length) fetchHistory();
+  renderSidebar();
+  buildSelPills();
+  // auto-pick first player
+  const m = matchMeta[mid];
+  if (m) { selPlayer = m.player_a; updateSelPills(); fetchHistory(); }
+  connectSSE();
 }
 
-document.getElementById('marketSelect').addEventListener('change', function() {
-  selectedMarket = this.value;
-  selectedSelection = null;
-  livePoints = [];
-  updateSelPills();
-  destroyChart();
-  fetchHistory();
-});
-
-document.getElementById('windowSelect').addEventListener('change', () => {
-  if (selectedSelection) fetchHistory();
-});
-
-function updateSelPills() {
-  const mkts = prices[selectedMatch] || {};
-  const odds = mkts[selectedMarket] || {};
-  const container = document.getElementById('selPills');
-  container.innerHTML = Object.keys(odds).map(sel => {
-    const cls = selectedSelection === sel ? ' selected' : '';
-    return `<span class="sel-pill${cls}" data-sel="${sel}">${sel}: ${odds[sel].toFixed(2)}</span>`;
-  }).join('');
-  container.querySelectorAll('.sel-pill').forEach(pill => {
-    pill.addEventListener('click', () => {
-      selectedSelection = pill.dataset.sel;
-      livePoints = [];
-      updateSelPills();
-      fetchHistory();
-    });
+function buildSelPills() {
+  const m = matchMeta[selMatch];
+  if (!m) return;
+  let html = '';
+  [m.player_a, m.player_b].filter(Boolean).forEach(p => {
+    const cls = selPlayer === p ? ' pill active' : 'pill';
+    html += '<button class="'+cls+'" data-p="'+p+'">'+p+'</button>';
+  });
+  document.getElementById('selPills').innerHTML = html;
+  document.querySelectorAll('#selPills .pill').forEach(p => {
+    p.addEventListener('click', () => { selPlayer = p.dataset.p; updateSelPills(); fetchHistory(); });
   });
 }
 
-// ── Chart ──────────────────────────────────────────────────────
+function updateSelPills() {
+  document.querySelectorAll('#selPills .pill').forEach(p => {
+    p.classList.toggle('active', p.dataset.p === selPlayer);
+  });
+}
+
 function destroyChart() {
   if (chart) { chart.destroy(); chart = null; }
-  document.getElementById('noData').style.display = 'block';
+  document.getElementById('chart').style.display = 'none';
+  document.getElementById('noData').style.display = '';
   document.getElementById('infoBar').innerHTML = '';
 }
 
 async function fetchHistory() {
-  if (!selectedMatch || !selectedMarket || !selectedSelection) return;
-
-  const windowS = parseInt(document.getElementById('windowSelect').value) || 86400;
-  const limit = windowS > 0 ? 2000 : 500;
-
+  if (!selMatch || !selPlayer) return;
   try {
-    const r = await fetch(`${API}/history?match_id=${selectedMatch}&selection=${encodeURIComponent(selectedSelection)}&market=${encodeURIComponent(selectedMarket)}&limit=${limit}`);
+    const r = await fetch(API()+'/history?match_id='+selMatch+'&selection='+encodeURIComponent(selPlayer)+'&market='+encodeURIComponent(selMarket)+'&limit=5000');
     const data = await r.json();
-    let points = data.points || [];
-
-    // Apply time window filter
-    if (windowS > 0) {
-      const cutoff = Date.now() / 1000 - windowS;
-      points = points.filter(p => p.ts >= cutoff);
-    }
-
-    // Merge live points
-    const merged = [...points, ...livePoints.filter(lp => !points.some(p => Math.abs(p.ts - lp.ts) < 0.1))];
-    merged.sort((a, b) => a.ts - b.ts);
-
-    drawChart(merged);
-  } catch(e) {
-    document.getElementById('debug').textContent = 'History fetch error: ' + e.message;
-  }
+    livePoints = (data.points||[]).map(p => ({ x: p.ts*1000, y: p.odd }));
+    // add current price if fresher
+    try {
+      const pr = await fetch(API()+'/prices').then(r=>r.json());
+      const cur = pr?.[selMatch]?.[selMarket]?.[selPlayer];
+      if (cur !== undefined && (!livePoints.length || (Date.now()/1000 - livePoints[livePoints.length-1].x/1000) > 2)) {
+        livePoints.push({ x: Date.now(), y: cur });
+      }
+    } catch(_) {}
+    drawChart();
+  } catch(e) { console.warn('history fetch error:', e); }
 }
 
-function drawChart(points) {
+function drawChart() {
   destroyChart();
-  document.getElementById('noData').style.display = points.length ? 'none' : 'block';
-  if (!points.length) return;
+  let pts = [...livePoints];
+  if (timeMins > 0) {
+    const cutoff = Date.now() - timeMins*60*1000;
+    pts = pts.filter(p => p.x >= cutoff);
+  }
+  if (!pts.length) return;
 
   const ctx = document.getElementById('chart').getContext('2d');
-  const labels = points.map(p => new Date(p.ts * 1000));
-  const values = points.map(p => p.odd);
+  document.getElementById('chart').style.display = '';
+  document.getElementById('noData').style.display = 'none';
 
   chart = new Chart(ctx, {
     type: 'line',
-    data: {
-      labels,
-      datasets: [{
-        label: `${selectedSelection} — ${selectedMarket}`,
-        data: values,
-        borderColor: '#58a6ff',
-        backgroundColor: 'rgba(88,166,255,0.1)',
-        fill: true,
-        pointRadius: points.length <= 5 ? 4 : points.length <= 30 ? 2 : 0,
-        pointBackgroundColor: '#58a6ff',
-        borderWidth: 1.5,
-        tension: 0.1,
-      }],
-    },
+    data: { datasets: [{
+      label: selPlayer + ' — ' + selMarket,
+      data: pts,
+      borderColor: '#00d4aa',
+      backgroundColor: 'rgba(0,212,170,0.08)',
+      borderWidth: 1.5, pointRadius: 0, fill: true, tension: 0.1,
+    }]},
     options: {
-      responsive: true,
-      maintainAspectRatio: false,
+      responsive: true, maintainAspectRatio: false, animation: false,
       scales: {
         x: {
-          type: 'time',
-          time: { unit: 'minute', displayFormats: { minute: 'HH:mm' } },
-          grid: { color: 'rgba(48,54,61,0.5)' },
-          ticks: { color: '#8b949e', maxTicksLimit: 15 },
+          type: 'time', time: { unit: timeMins <= 15 ? 'minute' : 'hour', displayFormats: { minute:'HH:mm', hour:'HH:mm' } },
+          grid: { color: '#1a2e45' }, ticks: { color: '#3a6080', font: { size: 10 } }
         },
         y: {
-          grid: { color: 'rgba(48,54,61,0.5)' },
-          ticks: { color: '#8b949e' },
-        },
+          grid: { color: '#1a2e45' }, ticks: { color: '#3a6080', font: { size: 10 }, callback: v => v.toFixed(2) }
+        }
       },
-      plugins: {
-        legend: { labels: { color: '#c9d1d9' } },
-      },
-      interaction: { intersect: false, mode: 'index' },
-    },
+      plugins: { legend: { display: false } },
+    }
   });
 
-  // Info bar
-  const current = values[values.length - 1];
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const delta = current - values[0];
-  const deltaCls = delta > 0 ? 'var(--green)' : delta < 0 ? 'var(--red)' : 'var(--text)';
-  document.getElementById('infoBar').innerHTML = `
-    <div class="info-stat"><div class="label">Current</div><div class="value">${current.toFixed(2)}</div></div>
-    <div class="info-stat"><div class="label">Min</div><div class="value">${min.toFixed(2)}</div></div>
-    <div class="info-stat"><div class="label">Max</div><div class="value">${max.toFixed(2)}</div></div>
-    <div class="info-stat"><div class="label">Delta</div><div class="value" style="color:${deltaCls}">${delta >= 0 ? '+' : ''}${delta.toFixed(2)}</div></div>
-    <div class="info-stat"><div class="label">Points</div><div class="value">${points.length}</div></div>
-  `;
+  const vals = pts.map(p => p.y);
+  const cur = vals[vals.length-1], min = Math.min(...vals), max = Math.max(...vals);
+  const delta = cur - pts[0].y;
+  const dc = delta > 0 ? 'var(--green)' : delta < 0 ? 'var(--red)' : 'var(--text)';
+  document.getElementById('infoBar').innerHTML =
+    '<div class="info-stat"><div class="lbl">Current</div><div class="val">'+cur.toFixed(2)+'</div></div>'
+    + '<div class="info-stat"><div class="lbl">Min</div><div class="val">'+min.toFixed(2)+'</div></div>'
+    + '<div class="info-stat"><div class="lbl">Max</div><div class="val">'+max.toFixed(2)+'</div></div>'
+    + '<div class="info-stat"><div class="lbl">Delta</div><div class="val" style="color:'+dc+'">'+(delta>=0?'+':'')+delta.toFixed(2)+'</div></div>'
+    + '<div class="info-stat"><div class="lbl">Points</div><div class="val">'+pts.length+'</div></div>';
 }
 
-// ── SSE live updates ───────────────────────────────────────────
-let retryDelay = 1000;
-function connectSSE() {
-  const sse = new EventSource(`${API}/stream`);
-  sse.addEventListener('snapshot', e => {
-    try {
-      const data = JSON.parse(e.data);
-      if (data.prices) {
-        prices = data.prices;
-        // Refresh market list if needed
-        if (selectedMatch && prices[selectedMatch]) {
-          const mkts = prices[selectedMatch];
-          const sel = document.getElementById('marketSelect');
-          if (sel.innerHTML === '') {
-            sel.innerHTML = Object.keys(mkts).map(n => `<option>${n}</option>`).join('');
-            if (!selectedMarket) selectedMarket = Object.keys(mkts)[0];
-          }
-          updateSelPills();
-        }
-      }
-    } catch(_) {}
-    retryDelay = 1000;
+// time pills
+document.querySelectorAll('.time-pill').forEach(pill => {
+  pill.addEventListener('click', function() {
+    document.querySelectorAll('.time-pill').forEach(p => p.classList.remove('active'));
+    this.classList.add('active');
+    timeMins = parseInt(this.dataset.m);
+    if (livePoints.length) drawChart();
   });
-  sse.addEventListener('message', e => {
+});
+
+// SSE
+function connectSSE() {
+  if (es) es.close();
+  es = new EventSource(API() + '/stream');
+  es.addEventListener('message', e => {
     if (!e.data) return;
     try {
       const d = JSON.parse(e.data);
       if (d.type !== 'price') return;
       const mid = String(d.match_id);
-      if (mid === selectedMatch && d.market === selectedMarket && selectedSelection && d.odds?.[selectedSelection] !== undefined) {
-        const pt = { ts: d.ts, match_id: d.match_id, market: d.market, selection: selectedSelection, odd: d.odds[selectedSelection] };
+      if (mid === selMatch && d.odds?.[selPlayer] !== undefined) {
+        const pt = { x: d.ts*1000, y: d.odds[selPlayer] };
         livePoints.push(pt);
-        // Keep only last 50 live points in buffer
-        if (livePoints.length > 50) livePoints = livePoints.slice(-50);
-        // Add point to chart if it exists
+        if (livePoints.length > 2000) livePoints = livePoints.slice(-2000);
         if (chart) {
-          const label = new Date(d.ts * 1000);
-          chart.data.labels.push(label);
-          chart.data.datasets[0].data.push(d.odds[selectedSelection]);
-          // Keep at most 500 points on chart
-          if (chart.data.labels.length > 500) {
-            chart.data.labels.shift();
-            chart.data.datasets[0].data.shift();
-          }
+          chart.data.datasets[0].data.push(pt);
+          if (chart.data.datasets[0].data.length > 500) chart.data.datasets[0].data.shift();
           chart.update('none');
-          // Update info bar min/max
-          const vals = chart.data.datasets[0].data;
-          const cur = vals[vals.length - 1];
-          const mn = Math.min(...vals);
-          const mx = Math.max(...vals);
-          const dlt = cur - vals[0];
-          const dCls = dlt > 0 ? 'var(--green)' : dlt < 0 ? 'var(--red)' : 'var(--text)';
-          document.getElementById('infoBar').innerHTML = `
-            <div class="info-stat"><div class="label">Current</div><div class="value">${cur.toFixed(2)}</div></div>
-            <div class="info-stat"><div class="label">Min</div><div class="value">${mn.toFixed(2)}</div></div>
-            <div class="info-stat"><div class="label">Max</div><div class="value">${mx.toFixed(2)}</div></div>
-            <div class="info-stat"><div class="label">Delta</div><div class="value" style="color:${dCls}">${dlt >= 0 ? '+' : ''}${dlt.toFixed(2)}</div></div>
-            <div class="info-stat"><div class="label">Points</div><div class="value">${vals.length}</div></div>
-          `;
+          updateInfoBar();
         }
       }
-      // Update prices in memory
-      if (prices[mid]) {
-        prices[mid][d.market] = d.odds;
-        if (mid === selectedMatch && d.market === selectedMarket) updateSelPills();
-      }
-      // Update meta
-      if (d.meta && mid) meta[mid] = d.meta;
+      if (d.meta) matchMeta[String(d.match_id)] = d.meta;
     } catch(_) {}
-    document.getElementById('debug').textContent = `Live · ${new Date().toLocaleTimeString()} · SSE connected`;
   });
-  sse.onerror = () => {
-    sse.close();
-    document.getElementById('debug').textContent = 'SSE disconnected — reconnecting...';
-    retryDelay = Math.min(retryDelay * 2, 30000);
-    setTimeout(connectSSE, retryDelay);
-  };
+  es.onerror = () => { es.close(); setTimeout(connectSSE, 5000); };
 }
 
-// ── Init ───────────────────────────────────────────────────────
-bootstrap().then(() => connectSSE());
-// Refresh match list periodically
-setInterval(bootstrap, 30000);
+function updateInfoBar() {
+  if (!chart) return;
+  const vals = chart.data.datasets[0].data.map(p => p.y).filter(y => typeof y === 'number');
+  if (!vals.length) return;
+  const cur = vals[vals.length-1], min = Math.min(...vals), max = Math.max(...vals);
+  const delta = cur - vals[0];
+  const dc = delta > 0 ? 'var(--green)' : delta < 0 ? 'var(--red)' : 'var(--text)';
+  document.getElementById('infoBar').innerHTML =
+    '<div class="info-stat"><div class="lbl">Current</div><div class="val">'+cur.toFixed(2)+'</div></div>'
+    + '<div class="info-stat"><div class="lbl">Min</div><div class="val">'+min.toFixed(2)+'</div></div>'
+    + '<div class="info-stat"><div class="lbl">Max</div><div class="val">'+max.toFixed(2)+'</div></div>'
+    + '<div class="info-stat"><div class="lbl">Delta</div><div class="val" style="color:'+dc+'">'+(delta>=0?'+':'')+delta.toFixed(2)+'</div></div>'
+    + '<div class="info-stat"><div class="lbl">Points</div><div class="val">'+vals.length+'</div></div>';
+}
+
+// init
+loadMatches();
+setInterval(loadMatches, 30000);
 </script>
 </body>
 </html>
