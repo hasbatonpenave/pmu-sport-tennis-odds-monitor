@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     client_id: int = 200
     channel_id: int = 1
 
+    # Socket.IO push feed
+    kambi_push_url: str = "https://push-eu.offering-api.kambicdn.com"
+    kambi_topic_prefix: str = "v2018.pmusportsfr.fr.ev"
+
     # Database
     db_path: str = "pmu_tennis.db"
 
@@ -25,6 +29,9 @@ class Settings(BaseSettings):
     max_streams_per_host: int = 20
     feed_queue_maxsize: int = 20_000
 
+    # Sports to fetch
+    sports: list[str] = ["TENNIS", "FOOTBALL"]
+
     # Tracked markets (criterion englishLabel or betOfferType match)
     tracked_markets: list[str] = [
         "Match Odds",
@@ -32,6 +39,13 @@ class Settings(BaseSettings):
         "Set Betting",
         "Game Handicap",
         "Total Sets",
+        "Full Time",
+        "Total Goals",
+        "Handicap",
+        "3-Way Handicap",
+        "Double Chance",
+        "Draw No Bet",
+        "Correct Score",
     ]
 
     # Circuit breaker
@@ -43,3 +57,30 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# Kambi sport key mapping (URL path → API sport field)
+SPORT_URL_KEY: dict[str, str] = {
+    "TENNIS": "tennis",
+    "FOOTBALL": "football",
+}
+
+# Per-sport market labels for initial REST parse filtering
+SPORT_MARKETS: dict[str, list[str]] = {
+    "TENNIS": [
+        "Match Odds",
+        "Total Games",
+        "Set Betting",
+        "Game Handicap",
+        "Total Sets",
+        "Correct Score",
+    ],
+    "FOOTBALL": [
+        "Full Time",
+        "Total Goals",
+        "Handicap",
+        "3-Way Handicap",
+        "Double Chance",
+        "Draw No Bet",
+        "Correct Score",
+    ],
+}

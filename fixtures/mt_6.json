@@ -1,0 +1,54 @@
+{
+  "t": "1778454047107",
+  "mt": 6,
+  "boa": {
+    "betOffer": {
+      "id": 2644699149,
+      "suspended": true,
+      "criterion": {
+        "id": 1001159967,
+        "label": "Nombre total de buts par Corinthians-SP",
+        "englishLabel": "Total Goals by Corinthians-SP",
+        "order": [],
+        "lifetime": "FULL_TIME"
+      },
+      "betOfferType": {
+        "id": 6,
+        "name": "Plus de/Moins de",
+        "englishName": "Over/Under"
+      },
+      "eventId": 1025985774,
+      "outcomes": [
+        {
+          "id": 4179005944,
+          "label": "Plus de",
+          "englishLabel": "Over",
+          "line": 4500,
+          "type": "OT_OVER",
+          "betOfferId": 2644699149,
+          "changedDate": "2026-05-10T22:59:49Z",
+          "status": "SUSPENDED",
+          "cashOutStatus": "DISABLED",
+          "displayOrder": 0
+        },
+        {
+          "id": 4179005945,
+          "label": "Moins de",
+          "englishLabel": "Under",
+          "line": 4500,
+          "type": "OT_UNDER",
+          "betOfferId": 2644699149,
+          "changedDate": "2026-05-10T22:59:49Z",
+          "status": "SUSPENDED",
+          "cashOutStatus": "DISABLED",
+          "displayOrder": 1
+        }
+      ],
+      "tags": [
+        "OFFERED_PREMATCH",
+        "OFFERED_LIVE"
+      ],
+      "cashOutStatus": "SUSPENDED"
+    }
+  }
+}

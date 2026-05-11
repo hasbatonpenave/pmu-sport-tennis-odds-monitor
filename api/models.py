@@ -12,6 +12,7 @@ class MatchMeta(BaseModel):
     competition: str
     start_time: str  # ISO 8601
     state: str  # STARTED, NOT_STARTED, CLOSED
+    sport: str = ""
     path: list[dict] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
 

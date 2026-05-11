@@ -1,13 +1,20 @@
+"""
+feed/stream.py — Kambi Socket.IO push client
+
+Replaces REST polling with a persistent Socket.IO connection.
+Subscribes/unsubscribes per-event as the match list changes.
+Pushes OddsUpdate onto the shared queue (same interface as before).
+"""
 import asyncio
+import json
 import logging
 import time
-from collections import defaultdict
-from typing import Optional
 
-from api.client import KambiClient
+import socketio
+
 from api.models import OddsUpdate
 from config import settings
-from feed.parser import diff_odds, parse_live_events
+from feed.parser import diff_odds
 
 logger = logging.getLogger(__name__)
 
@@ -47,75 +54,210 @@ class CircuitBreaker:
         return delay
 
 
-async def poll_live_odds(
-    client: KambiClient,
-    queue: asyncio.Queue,
-    stop_ev: asyncio.Event,
-) -> None:
-    """Poll live/open.json every poll_interval_s, diff against previous, push changes.
+class KambiPushClient:
+    """Persistent Socket.IO connection to Kambi push feed.
 
-    This is the primary live odds feed. It polls the lightweight live endpoint
-    (which returns only mainBetOffer + liveData for active events) and pushes
-    only changed outcomes to the shared queue.
+    Usage:
+        client = KambiPushClient(queue, stop_ev, meta_getter)
+        await client.run()          # blocks until stop_ev set
+
+    meta_getter: callable(event_id: int) -> MatchMeta | None
     """
-    breaker = CircuitBreaker()
-    # Track last-seen odds per (match_id, market) for diffing
-    prev_odds: dict[tuple[int, str], dict[str, float]] = {}
-    # Track version timestamps for early skip
-    prev_versions: dict[int, int] = {}
-    ncid = 0
 
-    while not stop_ev.is_set():
-        if breaker.is_open:
-            remaining = breaker._open_until - time.monotonic()
-            if remaining > 0:
-                logger.info("Circuit open, sleeping %.1fs", remaining)
+    def __init__(
+        self,
+        queue: asyncio.Queue,
+        stop_ev: asyncio.Event,
+        meta_getter,
+    ):
+        self._queue = queue
+        self._stop_ev = stop_ev
+        self._meta_getter = meta_getter
+        self._sio = socketio.AsyncClient(logger=False, engineio_logger=False, ssl_verify=False)
+        self._subscribed: set[int] = set()
+        self._prev_odds: dict[tuple[int, str], dict[str, float]] = {}
+        self._breaker = CircuitBreaker()
+        self._connected = asyncio.Event()
+
+        self._sio.on("connect", self._on_connect)
+        self._sio.on("disconnect", self._on_disconnect)
+        self._sio.on("message", self._on_message)
+
+    async def subscribe(self, event_id: int) -> None:
+        """Subscribe to a tennis event. Safe to call before connected."""
+        self._subscribed.add(event_id)
+        if self._sio.connected:
+            topic = f"{settings.kambi_topic_prefix}.{event_id}.json"
+            await self._sio.emit("subscribe", {"topic": topic})
+            logger.debug("Subscribed to event %d", event_id)
+
+    async def unsubscribe(self, event_id: int) -> None:
+        """Unsubscribe from a finished event."""
+        self._subscribed.discard(event_id)
+        if self._sio.connected:
+            topic = f"{settings.kambi_topic_prefix}.{event_id}.json"
+            await self._sio.emit("unsubscribe", {"topic": topic})
+
+    async def run(self) -> None:
+        """Main loop: connect, resubscribe on reconnect, reconnect on error."""
+        while not self._stop_ev.is_set():
+            if self._breaker.is_open:
+                remaining = self._breaker._open_until - time.monotonic()
                 try:
-                    await asyncio.wait_for(stop_ev.wait(), timeout=min(remaining, 10.0))
+                    await asyncio.wait_for(self._stop_ev.wait(), timeout=max(remaining, 0))
                 except asyncio.TimeoutError:
                     pass
                 continue
 
-        try:
-            data = await client.get_live_events(ncid=ncid)
-            ncid = int(time.time() * 1000)
-
-            updates = parse_live_events(data)
-
-            for update in updates:
-                key = (update.match_id, update.market)
-                prev = prev_odds.get(key, {})
-
-                # Check if anything changed
-                changed, movements = diff_odds(update.match_id, update.market, update.odds, prev)
-                if not changed:
-                    continue
-
-                prev_odds[key] = update.odds
-                update.movements = movements
-
-                # Push to shared queue (drop oldest if full)
-                try:
-                    queue.put_nowait(update)
-                except asyncio.QueueFull:
-                    try:
-                        queue.get_nowait()
-                        queue.put_nowait(update)
-                    except asyncio.QueueEmpty:
-                        pass
-
-            breaker.record_success()
-
-        except Exception as exc:
-            delay = breaker.next_delay()
-            logger.error("Live poll error (failures=%d, delay=%.1fs): %s", breaker._failures, delay, exc)
             try:
-                await asyncio.wait_for(stop_ev.wait(), timeout=min(delay, 10.0))
-            except asyncio.TimeoutError:
+                logger.info("Connecting to Kambi push feed...")
+                await self._sio.connect(
+                    settings.kambi_push_url,
+                    headers={"Origin": "https://www.pmu.fr"},
+                    transports=["websocket"],
+                    wait_timeout=15,
+                )
+                self._connected.set()
+                logger.info("Connected to Kambi push feed")
+                self._breaker.record_success()
+
+                while self._sio.connected and not self._stop_ev.is_set():
+                    await asyncio.sleep(1)
+
+            except Exception as exc:
+                delay = self._breaker.next_delay()
+                logger.error("Push feed connection failed (delay=%.1fs): %s", delay, exc)
+                self._connected.clear()
+                try:
+                    await asyncio.wait_for(self._stop_ev.wait(), timeout=min(delay, 10.0))
+                except asyncio.TimeoutError:
+                    pass
+
+        if self._sio.connected:
+            await self._sio.disconnect()
+
+    async def _on_connect(self):
+        """Re-subscribe to all known events after reconnect."""
+        self._connected.set()
+        for event_id in list(self._subscribed):
+            topic = f"{settings.kambi_topic_prefix}.{event_id}.json"
+            await self._sio.emit("subscribe", {"topic": topic})
+        logger.info("Resubscribed to %d events", len(self._subscribed))
+
+    async def _on_disconnect(self):
+        self._connected.clear()
+        logger.warning("Disconnected from Kambi push feed")
+
+    async def _on_message(self, data):
+        """Parse incoming Socket.IO message and push OddsUpdate to queue."""
+        try:
+            frames = json.loads(data) if isinstance(data, str) else data
+        except Exception:
+            return
+
+        if not isinstance(frames, list):
+            return
+
+        for frame in frames:
+            if not isinstance(frame, dict):
+                continue
+
+            mt = frame.get("mt")
+
+            if mt == 6:
+                await self._handle_boa(frame)
+            elif mt == 8:
+                await self._handle_bosu(frame)
+            # mt=22 (booa) ignored — outcome-level status changes, no odds
+
+    async def _handle_boa(self, frame: dict) -> None:
+        """Parse mt=6 Bet Offer Amendment frame.
+
+        Field path: boa.betOffer -> eventId, criterion, outcomes[] with odds (×1000).
+        """
+        bo = frame.get("boa", {}).get("betOffer", {})
+        event_id = bo.get("eventId")
+        if not event_id:
+            return
+
+        # Check if market-level suspended
+        if bo.get("suspended"):
+            return
+
+        criterion = bo.get("criterion", {})
+        label = criterion.get("englishLabel", "")
+
+        # Filter to tracked tennis markets
+        if not any(t in label for t in settings.tracked_markets):
+            return
+
+        # Build market key — include line for O/U and handicap
+        market_key = label
+        outcomes = bo.get("outcomes", [])
+        for outcome in outcomes:
+            line = outcome.get("line")
+            if line is not None:
+                market_key = f"{label} {line / 1000.0:g}"
+                break
+
+        odds: dict[str, float] = {}
+        for outcome in outcomes:
+            if outcome.get("status") != "OPEN":
+                continue
+            odd_int = outcome.get("odds")
+            if odd_int is None:
+                continue
+            sel_label = outcome.get("englishLabel") or outcome.get("label", "")
+            odds[sel_label] = odd_int / 1000.0
+
+        if not odds:
+            return
+
+        self._push_update(event_id, market_key, odds)
+
+    async def _handle_bosu(self, frame: dict) -> None:
+        """Parse mt=8 Bet Offer Suspension frame.
+
+        Lightweight suspension toggle — no odds data.
+        """
+        bosu = frame.get("bosu", {})
+        event_id = bosu.get("eventId")
+        if event_id and bosu.get("suspended"):
+            update = OddsUpdate(
+                match_id=event_id,
+                market="__suspended__",
+                odds={},
+                live=True,
+            )
+            try:
+                self._queue.put_nowait(update)
+            except asyncio.QueueFull:
                 pass
 
-        # Wait for next poll interval (interruptible by stop)
+    def _push_update(self, event_id: int, market: str, odds: dict) -> None:
+        """Diff against previous and push only if changed."""
+        key = (event_id, market)
+        prev = self._prev_odds.get(key, {})
+        changed, movements = diff_odds(event_id, market, odds, prev)
+        if not changed:
+            return
+
+        self._prev_odds[key] = odds
+        meta = self._meta_getter(event_id)
+
+        update = OddsUpdate(
+            match_id=event_id,
+            market=market,
+            odds=changed,
+            movements=movements,
+            meta=meta,
+            live=True,
+        )
         try:
-            await asyncio.wait_for(stop_ev.wait(), timeout=settings.poll_interval_s)
-        except asyncio.TimeoutError:
-            pass
+            self._queue.put_nowait(update)
+        except asyncio.QueueFull:
+            try:
+                self._queue.get_nowait()
+                self._queue.put_nowait(update)
+            except asyncio.QueueEmpty:
+                pass

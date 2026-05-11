@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PMU SPORT — Tennis Odds</title>
+<title>PMU SPORT — Live Odds</title>
 <style>
   :root {
     --bg:       #060a0f;
@@ -85,6 +85,9 @@
   .card-hdr { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px; }
   .card-name { font-weight: 700; color: var(--text-hi); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .live-badge { background: var(--red); color: #000; font-size: 9px; padding: 1px 5px; border-radius: 3px; font-weight: 700; flex-shrink: 0; }
+  .sport-badge { font-size: 9px; padding: 1px 5px; border-radius: 3px; font-weight: 700; flex-shrink: 0; }
+  .sport-badge.tennis { background: var(--accent); color: #000; }
+  .sport-badge.football { background: #4a90d9; color: #fff; }
   .card-info { font-size: 10px; color: #3a6080; margin-bottom: 6px; }
   .card-score { font-size: 11px; color: var(--accent); margin-bottom: 4px; font-weight: 600; }
 
@@ -122,7 +125,7 @@
 <body>
 
 <div class="topbar">
-  <div class="logo">PMU<span> / Tennis Odds</span></div>
+  <div class="logo">PMU<span> / Live Odds</span></div>
   <div class="dot off" id="dot"></div>
   <span class="status-txt" id="statusTxt">connecting...</span>
   <input class="ctrl url-input" id="url" value="http://localhost:5500" placeholder="API URL">
@@ -131,10 +134,12 @@
 </div>
 
 <div class="toolbar">
-  <input class="ctrl" id="search" placeholder="Search player or tournament..." oninput="applyFilters()">
-  <button class="pill active" data-filter="all"    onclick="setFilter('all',this)">All</button>
+  <input class="ctrl" id="search" placeholder="Search player, team, or tournament..." oninput="applyFilters()">
+  <button class="pill active" data-filter="all"     onclick="setFilter('all',this)">All</button>
+  <button class="pill"        data-filter="TENNIS"   onclick="setFilter('TENNIS',this)">Tennis</button>
+  <button class="pill"        data-filter="FOOTBALL" onclick="setFilter('FOOTBALL',this)">Football</button>
   <button class="pill"        data-filter="moneyline" onclick="setFilter('moneyline',this)">Match Odds</button>
-  <button class="pill"        data-filter="handicap"  onclick="setFilter('handicap',this)">Game Hcp</button>
+  <button class="pill"        data-filter="handicap"  onclick="setFilter('handicap',this)">Hcp</button>
   <button class="pill"        data-filter="totals"    onclick="setFilter('totals',this)">Totals</button>
   <span class="match-count" id="matchCount"></span>
 </div>
@@ -166,11 +171,15 @@ function timeAgo(ts) {
 
 function applyFilters() {
   const q = ($('search').value || '').toLowerCase();
+  const sportFilters = ['TENNIS', 'FOOTBALL'];
+  const isSport = sportFilters.includes(activeFilter);
   let vis = 0;
   document.querySelectorAll('.card').forEach(c => {
-    const ok = (!q || (c.dataset.matchname||'').includes(q) || (c.dataset.players||'').includes(q)
-                   || (c.dataset.series||'').includes(q))
-            && (activeFilter === 'all' || c.dataset.markets?.includes(activeFilter));
+    const textOk = !q || (c.dataset.matchname||'').includes(q) || (c.dataset.players||'').includes(q)
+                      || (c.dataset.series||'').includes(q);
+    const sportOk = !isSport || c.dataset.sport === activeFilter;
+    const mktOk = isSport || activeFilter === 'all' || c.dataset.markets?.includes(activeFilter);
+    const ok = textOk && sportOk && mktOk;
     c.style.display = ok ? '' : 'none';
     if (ok) vis++;
   });
@@ -196,7 +205,9 @@ function ensureCard(mid, m) {
   if ($('c_' + mid)) return;
   $('empty').style.display = 'none';
   const mkt = m.prices || {};
-  const mkts = Object.keys(mkt).map(k => k.toLowerCase().includes('match odds') ? 'moneyline'
+  const sport = m.meta?.sport || '';
+  const mkts = Object.keys(mkt).map(k =>
+    k.toLowerCase().includes('match odds') || k.toLowerCase().includes('full time') ? 'moneyline'
     : k.toLowerCase().includes('handicap') ? 'handicap'
     : k.toLowerCase().includes('total') || k.toLowerCase().includes('over') ? 'totals' : k).join(' ');
 
@@ -240,10 +251,14 @@ function ensureCard(mid, m) {
   div.dataset.players = players.toLowerCase();
   div.dataset.series = (m.meta?.competition||'').toLowerCase();
   div.dataset.markets = mkts;
+  div.dataset.sport = sport;
+  const sportBadge = sport === 'TENNIS' ? '<div class="sport-badge tennis">T</div>'
+    : sport === 'FOOTBALL' ? '<div class="sport-badge football">F</div>' : '';
   div.innerHTML =
     '<div class="card-hdr">'
     + '<div class="card-name">' + (m.meta?.player_a||'?') + ' vs ' + (m.meta?.player_b||'?') + '</div>'
     + (live ? '<div class="live-badge">LIVE</div>' : '')
+    + sportBadge
     + '</div>'
     + '<div class="card-info">' + (m.meta?.competition||'') + ' · ' + (m.meta?.start_time ? new Date(m.meta.start_time).toLocaleString() : 'TBD') + '</div>'
     + scoreHTML
@@ -320,7 +335,11 @@ async function bootstrap() {
       Object.assign(matchState[mid].prices, mkts);
     }
     rebuildAll();
-  } catch(e) { console.warn('bootstrap failed:', e); }
+    setStatus(true); _retry = 1000;
+  } catch(e) {
+    console.error('bootstrap failed:', e);
+    $('statusTxt').textContent = 'ERR — ' + e.message;
+  }
 }
 
 function connect() {

@@ -7,7 +7,7 @@ from typing import Optional
 
 from fastapi import FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from api.client import KambiClient, make_session
 from api.models import OddsUpdate
@@ -35,6 +35,7 @@ _sse_update_count = 0
 def _build_snapshot_bytes() -> bytes:
     """Serialize current in-memory snapshot once per update (zero-copy for SSE clients)."""
     snapshot = {
+        "type": "snapshot",
         "prices": {
             str(mid): {
                 market: {sel: odd for sel, odd in selections.items()}
@@ -164,7 +165,7 @@ async def _consume_feed(
 
 # ── FastAPI app ─────────────────────────────────────────────────
 
-app = FastAPI(title="PMU SPORT Tennis Odds Monitor", lifespan=lifespan)
+app = FastAPI(title="PMU SPORT Odds Monitor", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -223,10 +224,7 @@ async def get_markets():
     manager: FeedManager = app.state.manager
     results: list[dict] = []
     for mid, meta in manager.meta.items():
-        results.append({
-            **meta.model_dump(),
-            "sport": "TENNIS",
-        })
+        results.append(meta.model_dump())
     return {"matches": results}
 
 
@@ -260,3 +258,14 @@ async def get_history(
         "market": market,
         "points": [p.model_dump() for p in points],
     }
+
+
+@app.get("/")
+@app.get("/dashboard.html")
+async def serve_dashboard():
+    return FileResponse("frontend/dashboard.html")
+
+
+@app.get("/stream.html")
+async def serve_stream_log():
+    return FileResponse("frontend/stream.html")

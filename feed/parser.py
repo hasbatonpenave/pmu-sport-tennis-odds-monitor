@@ -25,14 +25,7 @@ _MARKET_TYPE_MAP = {
     18: "Yes/No",
 }
 
-# criterion.englishLabel patterns we want to track (substring match)
-_TRACKED_LABELS = [
-    "Match Odds",
-    "Total Games",
-    "Set Betting",
-    "Game Handicap",
-    "Total Sets",
-]
+# criterion.englishLabel patterns — filtering is now done per-sport via SPORT_MARKETS
 
 
 def _odds_int_to_float(odds_int: int) -> float:
@@ -65,7 +58,11 @@ def _extract_path(event: dict) -> list[dict]:
     return [{"id": p["id"], "name": p.get("name", ""), "termKey": p.get("termKey", "")} for p in path]
 
 
-def parse_match_list(data: dict) -> tuple[dict[int, MatchMeta], dict[int, dict[str, dict[str, float]]]]:
+def parse_match_list(
+    data: dict,
+    sport_name: str,
+    tracked_markets: list[str],
+) -> tuple[dict[int, MatchMeta], dict[int, dict[str, dict[str, float]]]]:
     """Parse listView response.
 
     Returns (meta_by_id, prices_by_id) where prices is {match_id: {market_name: {selection: odd}}}.
@@ -79,8 +76,8 @@ def parse_match_list(data: dict) -> tuple[dict[int, MatchMeta], dict[int, dict[s
         if not match_id:
             continue
 
-        # Only process tennis events (listView may include other sports)
-        if event.get("sport") != "TENNIS":
+        # Only process events matching the requested sport
+        if event.get("sport") != sport_name:
             continue
 
         state = event.get("state", "NOT_STARTED")
@@ -93,6 +90,7 @@ def parse_match_list(data: dict) -> tuple[dict[int, MatchMeta], dict[int, dict[s
             competition=event.get("group", ""),
             start_time=event.get("start", ""),
             state=state,
+            sport=sport_name,
             path=_extract_path(event),
             tags=event.get("tags", []),
         )
@@ -106,7 +104,7 @@ def parse_match_list(data: dict) -> tuple[dict[int, MatchMeta], dict[int, dict[s
             label = criterion.get("englishLabel", "")
 
             # Only track relevant markets
-            if not any(t in label for t in _TRACKED_LABELS):
+            if not any(t in label for t in tracked_markets):
                 continue
 
             # Build market key: include line for O/U and handicap
@@ -138,7 +136,10 @@ def parse_match_list(data: dict) -> tuple[dict[int, MatchMeta], dict[int, dict[s
     return meta_by_id, prices_by_id
 
 
-def parse_live_events(data: dict) -> list[OddsUpdate]:
+def parse_live_events(
+    data: dict,
+    accepted_sports: list[str] | None = None,
+) -> list[OddsUpdate]:
     """Parse live/open.json response into OddsUpdate list (only changed events).
 
     Returns updates for live matches with mainBetOffer + liveData.
@@ -147,7 +148,9 @@ def parse_live_events(data: dict) -> list[OddsUpdate]:
 
     for entry in data.get("liveEvents", []):
         event = entry.get("event", {})
-        if event.get("sport") != "TENNIS":
+        sport = event.get("sport", "")
+
+        if accepted_sports and sport not in accepted_sports:
             continue
 
         match_id = event.get("id")
@@ -187,6 +190,7 @@ def parse_live_events(data: dict) -> list[OddsUpdate]:
                 competition=event.get("group", ""),
                 start_time=event.get("start", ""),
                 state=event.get("state", "NOT_STARTED"),
+                sport=sport,
                 path=_extract_path(event),
                 tags=event.get("tags", []),
             ),
@@ -198,7 +202,11 @@ def parse_live_events(data: dict) -> list[OddsUpdate]:
     return updates
 
 
-def parse_betoffers(data: dict, match_id: int) -> list[OddsUpdate]:
+def parse_betoffers(
+    data: dict,
+    match_id: int,
+    tracked_markets: list[str],
+) -> list[OddsUpdate]:
     """Parse betoffer/event/{id}.json response into OddsUpdate list.
 
     Extracts all tracked markets from the detailed bet offer endpoint.
@@ -209,7 +217,7 @@ def parse_betoffers(data: dict, match_id: int) -> list[OddsUpdate]:
         criterion = bo.get("criterion", {})
         label = criterion.get("englishLabel", "")
 
-        if not any(t in label for t in _TRACKED_LABELS):
+        if not any(t in label for t in tracked_markets):
             continue
 
         market_key = label

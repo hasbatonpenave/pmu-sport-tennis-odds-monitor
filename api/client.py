@@ -3,16 +3,9 @@ import ssl
 
 import aiohttp
 
-from config import settings
+from config import SPORT_URL_KEY, settings
 
 logger = logging.getLogger(__name__)
-
-_LIST_VIEW_URL = (
-    f"{settings.kambi_base_url}/listView/tennis/all/all/all/matches.json"
-    f"?lang={settings.locale}&market={settings.market}"
-    f"&client_id={settings.client_id}&channel_id={settings.channel_id}"
-    f"&useCombined=true&useCombinedLive=true"
-)
 
 _LIVE_OPEN_URL = (
     f"{settings.kambi_base_url}/event/live/open.json"
@@ -61,9 +54,16 @@ class KambiClient:
     def __init__(self, session: aiohttp.ClientSession):
         self._session = session
 
-    async def list_matches(self) -> dict:
-        """Fetch all tennis matches with combined odds (live + pre-match)."""
-        async with self._session.get(_LIST_VIEW_URL) as resp:
+    async def list_matches(self, sport_name: str = "TENNIS") -> dict:
+        """Fetch all matches for a sport with combined odds (live + pre-match)."""
+        url_key = SPORT_URL_KEY.get(sport_name, sport_name.lower())
+        url = (
+            f"{settings.kambi_base_url}/listView/{url_key}/all/all/all/matches.json"
+            f"?lang={settings.locale}&market={settings.market}"
+            f"&client_id={settings.client_id}&channel_id={settings.channel_id}"
+            f"&useCombined=true&useCombinedLive=true"
+        )
+        async with self._session.get(url) as resp:
             resp.raise_for_status()
             return await resp.json()
 

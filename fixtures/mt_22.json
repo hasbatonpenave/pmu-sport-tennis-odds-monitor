@@ -1,0 +1,87 @@
+{
+  "t": "1778454142997",
+  "mt": 22,
+  "booa": {
+    "eventId": 1025985774,
+    "outcomes": [
+      {
+        "id": 4179051014,
+        "label": "7-2",
+        "englishLabel": "7-2",
+        "type": "OT_UNTYPED",
+        "betOfferId": 2640579270,
+        "changedDate": "2026-05-10T23:02:22Z",
+        "status": "SUSPENDED",
+        "cashOutStatus": "DISABLED",
+        "homeScore": "7",
+        "awayScore": "2",
+        "displayOrder": 22
+      },
+      {
+        "id": 4179051015,
+        "label": "7-0",
+        "englishLabel": "7-0",
+        "type": "OT_UNTYPED",
+        "betOfferId": 2640579270,
+        "changedDate": "2026-05-10T23:02:22Z",
+        "status": "SUSPENDED",
+        "cashOutStatus": "DISABLED",
+        "homeScore": "7",
+        "awayScore": "0",
+        "displayOrder": 23
+      },
+      {
+        "id": 4179051016,
+        "label": "7-5",
+        "englishLabel": "7-5",
+        "type": "OT_UNTYPED",
+        "betOfferId": 2640579270,
+        "changedDate": "2026-05-10T23:02:22Z",
+        "status": "SUSPENDED",
+        "cashOutStatus": "DISABLED",
+        "homeScore": "7",
+        "awayScore": "5",
+        "displayOrder": 24
+      },
+      {
+        "id": 4179051017,
+        "label": "7-4",
+        "englishLabel": "7-4",
+        "type": "OT_UNTYPED",
+        "betOfferId": 2640579270,
+        "changedDate": "2026-05-10T23:02:22Z",
+        "status": "SUSPENDED",
+        "cashOutStatus": "DISABLED",
+        "homeScore": "7",
+        "awayScore": "4",
+        "displayOrder": 25
+      },
+      {
+        "id": 4179051018,
+        "label": "7-3",
+        "englishLabel": "7-3",
+        "type": "OT_UNTYPED",
+        "betOfferId": 2640579270,
+        "changedDate": "2026-05-10T23:02:22Z",
+        "status": "SUSPENDED",
+        "cashOutStatus": "DISABLED",
+        "homeScore": "7",
+        "awayScore": "3",
+        "displayOrder": 26
+      },
+      {
+        "id": 4179051019,
+        "label": "7-1",
+        "englishLabel": "7-1",
+        "type": "OT_UNTYPED",
+        "betOfferId": 2640579270,
+        "changedDate": "2026-05-10T23:02:22Z",
+        "status": "SUSPENDED",
+        "cashOutStatus": "DISABLED",
+        "homeScore": "7",
+        "awayScore": "1",
+        "displayOrder": 27
+      }
+    ]
+  }
+}

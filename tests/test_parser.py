@@ -4,6 +4,7 @@ from feed.parser import (
     _extract_path,
     parse_match_list,
     parse_live_events,
+    parse_betoffers,
     diff_odds,
 )
 
@@ -56,7 +57,7 @@ class TestPathExtraction:
 
 class TestParseMatchList:
     def test_parse_empty(self):
-        meta, prices = parse_match_list({"events": []})
+        meta, prices = parse_match_list({"events": []}, sport_name="TENNIS", tracked_markets=["Match Odds"])
         assert meta == {}
         assert prices == {}
 
@@ -87,10 +88,11 @@ class TestParseMatchList:
                 }],
             }]
         }
-        meta, prices = parse_match_list(data)
+        meta, prices = parse_match_list(data, sport_name="TENNIS", tracked_markets=["Match Odds"])
         assert 12345 in meta
         assert meta[12345].player_a == "Federer"
         assert meta[12345].state == "NOT_STARTED"
+        assert meta[12345].sport == "TENNIS"
         assert "Match Odds" in prices[12345]
         assert prices[12345]["Match Odds"]["Federer"] == 1.85
         assert prices[12345]["Match Odds"]["Nadal"] == 2.10
@@ -127,12 +129,14 @@ class TestParseLiveEvents:
                 },
             }]
         }
-        updates = parse_live_events(data)
+        updates = parse_live_events(data, accepted_sports=["TENNIS"])
         assert len(updates) == 1
         u = updates[0]
         assert u.match_id == 99999
         assert u.live is True
         assert u.odds["Djokovic"] == 1.75
+        assert u.meta is not None
+        assert u.meta.sport == "TENNIS"
         assert u.score is not None
         assert u.score.sets_home == [6, 2]
 
@@ -156,3 +160,77 @@ class TestDiffOdds:
     def test_steady_excluded(self):
         changed, movements = diff_odds(1, "Match Odds", {"A": 1.85}, {"A": 1.85})
         assert "A" not in changed
+
+
+class TestParseFootball:
+    def test_parse_football_match(self):
+        data = {
+            "events": [{
+                "event": {
+                    "id": 55555,
+                    "name": "River Plate - San Lorenzo",
+                    "homeName": "River Plate",
+                    "awayName": "San Lorenzo",
+                    "group": "Primera Division",
+                    "start": "2026-05-07T22:00:00Z",
+                    "state": "STARTED",
+                    "sport": "FOOTBALL",
+                    "tags": ["MATCH"],
+                    "path": [],
+                },
+                "betOffers": [{
+                    "id": 300,
+                    "criterion": {"id": 1, "englishLabel": "Full Time", "label": "Resultat"},
+                    "betOfferType": {"id": 2, "name": "Match", "englishName": "Match"},
+                    "outcomes": [
+                        {"id": 1, "englishLabel": "River Plate", "odds": 2100, "status": "OPEN", "type": "OT_ONE"},
+                        {"id": 2, "englishLabel": "Draw", "odds": 3200, "status": "OPEN", "type": "OT_TWO"},
+                        {"id": 3, "englishLabel": "San Lorenzo", "odds": 3500, "status": "OPEN", "type": "OT_TWO"},
+                    ],
+                    "tags": ["MAIN"],
+                }],
+            }]
+        }
+        meta, prices = parse_match_list(
+            data, sport_name="FOOTBALL",
+            tracked_markets=["Full Time", "Total Goals", "Handicap"],
+        )
+        assert 55555 in meta
+        assert meta[55555].sport == "FOOTBALL"
+        assert meta[55555].player_a == "River Plate"
+        assert "Full Time" in prices[55555]
+        assert prices[55555]["Full Time"]["River Plate"] == 2.10
+        assert prices[55555]["Full Time"]["Draw"] == 3.20
+
+    def test_parse_betoffers_football(self):
+        data = {
+            "betOffers": [
+                {
+                    "criterion": {"id": 1, "englishLabel": "Full Time", "label": "Resultat"},
+                    "outcomes": [
+                        {"id": 1, "englishLabel": "Home", "odds": 1800, "status": "OPEN", "type": "OT_ONE"},
+                    ],
+                },
+                {
+                    "criterion": {"id": 2, "englishLabel": "Total Goals", "label": "Total Goals"},
+                    "outcomes": [
+                        {"id": 2, "englishLabel": "Over 2.5", "odds": 1900, "line": 2500, "status": "OPEN", "type": "OT_OVER"},
+                    ],
+                },
+                {
+                    "criterion": {"id": 3, "englishLabel": "Player to Score", "label": "Player to Score"},
+                    "outcomes": [
+                        {"id": 3, "englishLabel": "Messi", "odds": 3000, "status": "OPEN", "type": "OT_PLAYER"},
+                    ],
+                },
+            ]
+        }
+        updates = parse_betoffers(
+            data, match_id=55555,
+            tracked_markets=["Full Time", "Total Goals"],
+        )
+        assert len(updates) == 2
+        labels = {u.market for u in updates}
+        assert "Full Time" in labels
+        assert "Total Goals 2.5" in labels
+        assert "Player to Score" not in labels
