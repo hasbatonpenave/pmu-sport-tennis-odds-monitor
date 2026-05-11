@@ -85,7 +85,7 @@
 
 <div class="main-layout">
   <div class="sidebar">
-    <h2>Tennis Matches</h2>
+    <h2>Matches</h2>
     <div id="loading">Loading matches...</div>
   </div>
   <div class="main">
@@ -108,9 +108,10 @@
 
 <script>
 const API = () => document.getElementById('url').value.trim();
-let chart = null, matchMeta = {}, livePoints = [];
-let selMatch = null, selPlayer = null, selMarket = 'Match Odds', timeMins = 5;
+let chart = null, matchMeta = {}, matchPrices = {}, livePoints = [];
+let selMatch = null, selPlayer = null, selMarket = '', timeMins = 5;
 let es = null;
+const MAIN_MARKETS = ['full time', 'match odds', '1x2'];
 
 function reload() { selMatch = null; selPlayer = null; livePoints = []; if(es) es.close(); destroyChart(); loadMatches(); }
 
@@ -123,6 +124,7 @@ async function loadMatches() {
       fetch(API()+'/prices').then(r=>r.json()),
     ]);
     for (const m of (mr.matches||[])) matchMeta[String(m.match_id)] = m;
+    matchPrices = pr;
     renderSidebar();
     if (!Object.keys(matchMeta).length) l.textContent = 'No matches yet. Start the server.';
   } catch(e) { l.textContent = 'Error: ' + e.message; }
@@ -141,7 +143,7 @@ function renderSidebar() {
       + '<div class="mi-info">' + (m.competition||'') + ' · ' + (m.start_time ? new Date(m.start_time).toLocaleDateString() : '') + '</div>'
       + '</div>';
   }
-  cont.innerHTML = '<h2>Tennis Matches</h2>' + html;
+  cont.innerHTML = '<h2>Matches</h2>' + html;
   cont.querySelectorAll('.match-item').forEach(el => {
     el.addEventListener('click', () => selectMatch(el.dataset.mid));
   });
@@ -151,30 +153,50 @@ function selectMatch(mid) {
   selMatch = mid; selPlayer = null; livePoints = [];
   destroyChart();
   renderSidebar();
-  buildSelPills();
+  // determine 1X2 market from available prices
+  const mkts = Object.keys(matchPrices[mid] || {});
+  selMarket = mkts.find(k => MAIN_MARKETS.some(m => k.toLowerCase().includes(m))) || mkts[0] || '';
+  buildToolbar(mid);
   // auto-pick first player
   const m = matchMeta[mid];
-  if (m) { selPlayer = m.player_a; updateSelPills(); fetchHistory(); }
+  if (m && selMarket) { selPlayer = m.player_a; updateToolbar(); fetchHistory(); }
   connectSSE();
 }
 
-function buildSelPills() {
+function buildToolbar(mid) {
   const m = matchMeta[selMatch];
   if (!m) return;
+  const mkts = Object.keys(matchPrices[mid] || {});
+
   let html = '';
   [m.player_a, m.player_b].filter(Boolean).forEach(p => {
     const cls = selPlayer === p ? ' pill active' : 'pill';
     html += '<button class="'+cls+'" data-p="'+p+'">'+p+'</button>';
   });
+  if (mkts.length > 1) {
+    html += '<span style="color:#3a6080;font-size:11px;margin-left:8px">Mkt:</span>';
+    mkts.forEach(k => {
+      const short = k.length > 20 ? k.slice(0,18)+'…' : k;
+      const cls = selMarket === k ? ' pill active' : 'pill';
+      html += '<button class="'+cls+'" data-mkt="'+k+'">'+short+'</button>';
+    });
+  }
   document.getElementById('selPills').innerHTML = html;
-  document.querySelectorAll('#selPills .pill').forEach(p => {
-    p.addEventListener('click', () => { selPlayer = p.dataset.p; updateSelPills(); fetchHistory(); });
+
+  document.querySelectorAll('#selPills [data-p]').forEach(p => {
+    p.addEventListener('click', () => { selPlayer = p.dataset.p; updateToolbar(); fetchHistory(); });
+  });
+  document.querySelectorAll('#selPills [data-mkt]').forEach(p => {
+    p.addEventListener('click', () => { selMarket = p.dataset.mkt; updateToolbar(); fetchHistory(); });
   });
 }
 
-function updateSelPills() {
-  document.querySelectorAll('#selPills .pill').forEach(p => {
+function updateToolbar() {
+  document.querySelectorAll('#selPills [data-p]').forEach(p => {
     p.classList.toggle('active', p.dataset.p === selPlayer);
+  });
+  document.querySelectorAll('#selPills [data-mkt]').forEach(p => {
+    p.classList.toggle('active', p.dataset.mkt === selMarket);
   });
 }
 
@@ -223,7 +245,7 @@ function drawChart() {
       data: pts,
       borderColor: '#00d4aa',
       backgroundColor: 'rgba(0,212,170,0.08)',
-      borderWidth: 1.5, pointRadius: 0, fill: true, tension: 0.1,
+      borderWidth: 1.5, pointRadius: 2, pointHoverRadius: 5, fill: true, tension: 0.1,
     }]},
     options: {
       responsive: true, maintainAspectRatio: false, animation: false,
@@ -272,7 +294,7 @@ function connectSSE() {
       const d = JSON.parse(e.data);
       if (d.type !== 'price') return;
       const mid = String(d.match_id);
-      if (mid === selMatch && d.odds?.[selPlayer] !== undefined) {
+      if (mid === selMatch && d.market === selMarket && d.odds?.[selPlayer] !== undefined) {
         const pt = { x: d.ts*1000, y: d.odds[selPlayer] };
         livePoints.push(pt);
         if (livePoints.length > 2000) livePoints = livePoints.slice(-2000);

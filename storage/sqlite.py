@@ -154,8 +154,6 @@ class SQLiteRepository(PriceRepository):
             return
         rows = []
         for u in batch:
-            if u.meta is None:
-                continue
             for sel, odd in u.odds.items():
                 rows.append((
                     u.ts,
@@ -163,11 +161,11 @@ class SQLiteRepository(PriceRepository):
                     u.market,
                     sel,
                     odd,
-                    u.meta.name,
-                    u.meta.player_a,
-                    u.meta.player_b,
-                    u.meta.competition,
-                    u.meta.start_time,
+                    u.meta.name if u.meta else "",
+                    u.meta.player_a if u.meta else "",
+                    u.meta.player_b if u.meta else "",
+                    u.meta.competition if u.meta else "",
+                    u.meta.start_time if u.meta else "",
                     1 if u.live else 0,
                 ))
         if rows:

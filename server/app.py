@@ -266,6 +266,11 @@ async def serve_dashboard():
     return FileResponse("frontend/dashboard.html")
 
 
+@app.get("/chart.html")
+async def serve_chart():
+    return FileResponse("frontend/chart.html")
+
+
 @app.get("/stream.html")
 async def serve_stream_log():
     return FileResponse("frontend/stream.html")
