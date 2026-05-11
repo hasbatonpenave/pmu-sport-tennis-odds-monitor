@@ -204,9 +204,9 @@ function flashCell(cell, dir) {
 function ensureCard(mid, m) {
   if ($('c_' + mid)) return;
   $('empty').style.display = 'none';
-  const mkt = m.prices || {};
+  const prices = m.prices || {};
   const sport = m.meta?.sport || '';
-  const mkts = Object.keys(mkt).map(k =>
+  const mkts = Object.keys(prices).map(k =>
     k.toLowerCase().includes('match odds') || k.toLowerCase().includes('full time') ? 'moneyline'
     : k.toLowerCase().includes('handicap') ? 'handicap'
     : k.toLowerCase().includes('total') || k.toLowerCase().includes('over') ? 'totals' : k).join(' ');
@@ -229,7 +229,9 @@ function ensureCard(mid, m) {
   }
 
   let rows = '';
-  for (const [mkt, odds] of Object.entries(mkt)) {
+  for (const [mkt, odds] of Object.entries(prices).filter(([k]) =>
+    k.toLowerCase().includes('match odds') || k.toLowerCase().includes('full time') || k.toLowerCase().includes('1x2')
+  )) {
     const entries = Object.entries(odds);
     rows += '<div class="odds-row">';
     for (const [sel, odd] of entries) {
