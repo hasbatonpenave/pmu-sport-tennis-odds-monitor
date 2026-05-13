@@ -240,6 +240,24 @@ async def get_status():
     }
 
 
+@app.get("/history/markets")
+async def get_history_markets(match_id: int = Query(...)):
+    """Distinct markets and selections available in SQLite for a match.
+
+    Used by the chart frontend when live prices are not yet in memory
+    (e.g. after a server restart).
+    """
+    repo: PriceRepository = app.state.repo
+    rows = await asyncio.get_running_loop().run_in_executor(
+        None, lambda: repo.get_markets(match_id)
+    )
+    # Build {market: [selections]} map
+    markets: dict[str, list[str]] = {}
+    for row in rows:
+        markets.setdefault(row["market"], []).append(row["selection"])
+    return {"match_id": match_id, "markets": markets}
+
+
 @app.get("/history")
 async def get_history(
     match_id: int = Query(...),

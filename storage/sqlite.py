@@ -69,6 +69,24 @@ class SQLiteRepository(PriceRepository):
         if self._running:
             self._write_queue.put(update)
 
+    def get_markets(self, match_id: int) -> list[dict]:
+        """Return distinct {market, selection} pairs stored for a match."""
+        conn = sqlite3.connect(self._db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT market, selection
+                FROM pmu_prices
+                WHERE match_id = ?
+                ORDER BY market, selection
+                """,
+                (match_id,),
+            ).fetchall()
+            return [{"market": row["market"], "selection": row["selection"]} for row in rows]
+        finally:
+            conn.close()
+
     def get_history(
         self,
         match_id: int,

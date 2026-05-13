@@ -23,6 +23,11 @@ class PriceRepository(ABC):
         ...
 
     @abstractmethod
+    def get_markets(self, match_id: int) -> list[dict]:
+        """Return distinct {market, selection} pairs stored for a match."""
+        ...
+
+    @abstractmethod
     def start(self) -> None:
         ...
 
