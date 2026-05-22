@@ -13,6 +13,7 @@ from api.client import KambiClient, make_session
 from api.models import OddsUpdate
 from config import settings
 from feed.manager import FeedManager
+from feed.parser import parse_all_betoffers
 from storage.repository import PriceRepository
 from storage.sqlite import SQLiteRepository
 
@@ -238,6 +239,37 @@ async def get_status():
         "matches_known": len(app.state.manager.meta),
         "feed_updates": app.state.manager.updates_pushed,
     }
+
+
+@app.get("/match-markets/{match_id}")
+async def get_match_markets(match_id: int):
+    """Fetch all bet offers for a single match from Kambi and return every market.
+
+    Also merges the snapshot into the in-memory price store so SSE clients
+    and subsequent /prices calls reflect the full market set.
+    """
+    client = KambiClient(app.state.session)
+    try:
+        data = await client.get_betoffers(match_id)
+    except Exception as exc:
+        logger.warning("get_betoffers failed for %d: %s", match_id, exc)
+        return {"match_id": match_id, "markets": {}}
+
+    markets = parse_all_betoffers(data)
+
+    # Merge non-null odds into in-memory store so the chart SSE stream stays current
+    async with _prices_lock:
+        if match_id not in _prices:
+            _prices[match_id] = {}
+        for mkt, sels in markets.items():
+            if mkt not in _prices[match_id]:
+                _prices[match_id][mkt] = {}
+            for sel, odd in sels.items():
+                if odd is not None:
+                    _prices[match_id][mkt][sel] = odd
+        _snapshot_bytes = _build_snapshot_bytes()
+
+    return {"match_id": match_id, "markets": markets}
 
 
 @app.get("/history/markets")

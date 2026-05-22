@@ -15,7 +15,7 @@
   body {
     background: var(--bg); color: var(--text);
     font-family: 'Fira Mono', 'Cascadia Code', 'Consolas', monospace;
-    font-size: 12px; min-height: 100vh; display: flex; flex-direction: column;
+    font-size: 12px; height: 100vh; overflow: hidden; display: flex; flex-direction: column;
   }
   ::-webkit-scrollbar { width: 5px; }
   ::-webkit-scrollbar-track { background: transparent; }
@@ -81,6 +81,46 @@
   .info-stat .delta { font-weight: 700; }
   .err-text { color: var(--red); font-size: 11px; padding: 4px; }
   .sidebar-err { color: var(--red); font-size: 11px; padding: 8px; }
+
+  /* ── markets panel ── */
+  .match-hdr {
+    flex-shrink:0; padding:8px 16px; background:var(--bg2);
+    border-bottom:1px solid var(--border);
+    display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  }
+  .match-hdr-title { color:var(--text-hi); font-weight:700; font-size:12px; flex:1; }
+  .match-hdr-ph { color:#3a6080; font-size:11px; padding:8px 16px; flex-shrink:0;
+    background:var(--bg2); border-bottom:1px solid var(--border); }
+  .markets-panel { flex-shrink:0; overflow-y:auto; max-height:42vh; padding:8px 12px 4px;
+    border-bottom:1px solid var(--border); }
+  .markets-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:6px; }
+  .mkt-card { background:var(--bg2); border:1px solid var(--border); border-radius:4px; padding:6px 8px; }
+  .mkt-name { font-size:9px; text-transform:uppercase; letter-spacing:.05em; color:#3a6080; margin-bottom:4px; }
+  .sel-grid { display:flex; flex-wrap:wrap; gap:3px; }
+  .sel-btn {
+    background:var(--bg3); border:1px solid var(--border); border-radius:3px;
+    padding:4px 8px; cursor:pointer; font-size:11px;
+    display:flex; flex-direction:column; align-items:center; min-width:58px;
+    position:relative; transition:border-color .12s;
+  }
+  .sel-btn:hover { border-color:var(--accent); }
+  .sel-btn.active { border-color:var(--accent); color:var(--accent); background:rgba(0,212,170,.07); }
+  .sel-btn.suspended { opacity:0.38; }
+  .sel-btn.suspended .sel-odd { text-decoration:line-through; font-size:11px; color:var(--text); }
+  .sel-susp-lbl { font-size:7px; text-transform:uppercase; color:#3a6080; margin-top:1px; }
+  .sel-lbl { font-size:9px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:80px; }
+  .sel-odd { font-size:13px; font-weight:700; color:var(--text-hi); }
+  .sel-trend { position:absolute; top:2px; right:3px; font-size:9px; }
+  .sel-trend.up { color:var(--green); }
+  .sel-trend.down { color:var(--red); }
+  .flash-up, .flash-down { position:absolute; inset:0; border-radius:3px; pointer-events:none; opacity:0; }
+  .flash-up { background:rgba(0,212,170,.18); }
+  .flash-down { background:rgba(255,79,79,.18); }
+  .flashing-up .flash-up { animation:flash .6s ease-out; }
+  .flashing-down .flash-down { animation:flash .6s ease-out; }
+  @keyframes flash { 0%{opacity:1} 100%{opacity:0} }
+  .mkts-empty { color:#3a6080; font-size:11px; padding:16px 4px; text-align:center; }
+  .chart-section { flex:1; display:flex; flex-direction:column; overflow:hidden; min-height:0; }
 </style>
 </head>
 <body>
@@ -97,47 +137,46 @@
     <div id="sidebarStatus">Loading matches...</div>
   </div>
   <div class="main">
-    <div class="toolbar" id="toolbar">
-      <span style="color:#3a6080;font-size:11px">Select a match from the sidebar →</span>
+    <div id="matchHeader" class="match-hdr-ph">← Select a match from the sidebar</div>
+    <div class="markets-panel" id="marketsPanel" style="display:none">
+      <div id="marketsInner"></div>
     </div>
-    <div class="chart-wrap" id="chartWrap">
-      <div class="empty-state" id="placeholder">Select a match and player to view price history</div>
-      <canvas id="chart" style="display:none"></canvas>
+    <div class="chart-section">
+      <div class="toolbar" id="toolbar">
+        <span style="color:#3a6080;font-size:11px" id="chartCrumb">Click a selection above to view history</span>
+      </div>
+      <div class="chart-wrap" id="chartWrap">
+        <div class="empty-state" id="placeholder">Select a match, then click a selection</div>
+        <canvas id="chart" style="display:none"></canvas>
+      </div>
+      <div class="info-bar" id="infoBar"></div>
     </div>
-    <div class="info-bar" id="infoBar"></div>
   </div>
 </div>
 
 <script>
-// ── State ────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
 const apiUrl = () => $('url').value.trim();
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
-let matches = {};       // mid -> MatchMeta
-let livePrices = {};    // mid -> { market: { sel: odd } }
+let matches = {};
+let livePrices = {};
 let chart = null;
 let es = null;
 
 let selMatch = null;
-let selPlayer = null;
 let selMarket = '';
-
-// Full history buffer (all points from DB + live additions). {x: ms, y: odd}
+let selPlayer = '';
 let allPoints = [];
-let timeWindow = 0;      // minutes, 0 = all
-let lastLiveTs = 0;     // timestamp of last SSE point we appended
+let timeWindow = 0;
+let lastLiveTs = 0;
 
-const PRIORITY_MARKETS = ['1x2', 'full time', 'match odds'];
+const prevBtnOdds = {};
 
-// ── Init ─────────────────────────────────────────────────────────
 async function init() {
   disconnectSSE();
   resetChart();
-  matches = {};
-  livePrices = {};
-  $('sidebarStatus').textContent = 'Loading matches...';
-  $('sidebarStatus').className = '';
-
+  matches = {}; livePrices = {};
   try {
     const [mr, pr] = await Promise.all([
       fetch(apiUrl() + '/markets').then(r => r.json()),
@@ -146,171 +185,126 @@ async function init() {
     for (const m of (mr.matches || [])) matches[String(m.match_id)] = m;
     livePrices = pr;
     renderSidebar();
-    if (!Object.keys(matches).length) {
-      $('sidebarStatus').textContent = 'No matches yet. Start the server.';
-    }
-  } catch (e) {
-    $('sidebarStatus').innerHTML = '<span class="sidebar-err">Error: ' + e.message + '</span>';
+  } catch(e) {
+    $('sidebarStatus').innerHTML = '<span style="color:var(--red)">Error: ' + e.message + '</span>';
   }
 }
 
-// ── Sidebar ──────────────────────────────────────────────────────
 function renderSidebar() {
-  const sorted = Object.entries(matches).sort((a, b) => {
+  const sorted = Object.entries(matches).sort((a,b) => {
     const la = a[1].state === 'STARTED' ? 0 : 1;
     const lb = b[1].state === 'STARTED' ? 0 : 1;
-    return la - lb || (a[1].player_a || '').localeCompare(b[1].player_a || '');
+    return la - lb || (a[1].player_a||'').localeCompare(b[1].player_a||'');
   });
-
   let html = '<h2>Matches</h2>';
   for (const [mid, m] of sorted) {
     const live = m.state === 'STARTED';
-    const sel = mid === selMatch ? ' selected' : '';
-    html += '<div class="match-item' + sel + '" data-mid="' + mid + '">'
-      + '<div class="mi-name">' + (live ? '<span class="live-dot"></span>' : '')
-      + (m.player_a || '?') + ' vs ' + (m.player_b || '?') + '</div>'
-      + '<div class="mi-info">' + (m.competition || '') + ' · '
+    html += '<div class="match-item' + (mid===selMatch?' selected':'') + '" data-mid="' + mid + '">'
+      + '<div class="mi-name">' + (live?'<span class="live-dot"></span>':'')
+      + esc(m.player_a||'?') + ' vs ' + esc(m.player_b||'?') + '</div>'
+      + '<div class="mi-info">' + esc(m.competition||'') + ' · '
       + (m.start_time ? new Date(m.start_time).toLocaleDateString() : 'TBD') + '</div>'
       + '</div>';
   }
   $('sidebar').innerHTML = html + '<div id="sidebarStatus" style="display:none"></div>';
-  $('sidebar').querySelectorAll('.match-item').forEach(el => {
-    el.addEventListener('click', () => selectMatch(el.dataset.mid));
-  });
+  $('sidebar').querySelectorAll('.match-item').forEach(el =>
+    el.addEventListener('click', () => selectMatch(el.dataset.mid))
+  );
 }
 
-// ── Match selection ──────────────────────────────────────────────
 function selectMatch(mid) {
-  if (selMatch === mid) return;
-  selMatch = mid;
-  selPlayer = null;
-  selMarket = '';
-  allPoints = [];
-  lastLiveTs = 0;
+  selMatch = mid; selMarket = ''; selPlayer = '';
+  allPoints = []; lastLiveTs = 0;
   resetChart();
   renderSidebar();
 
-  const m = matches[mid];
-  if (!m) return;
+  const m = matches[mid] || {};
+  const live = m.state === 'STARTED';
+  const name = esc((m.player_a||'?') + ' vs ' + (m.player_b||'?'));
+  $('matchHeader').className = 'match-hdr';
+  $('matchHeader').innerHTML = '<span class="match-hdr-title">' + name + '</span>'
+    + (live ? '<span style="background:var(--red);color:#fff;font-size:9px;font-weight:700;padding:1px 5px;border-radius:2px">LIVE</span>' : '')
+    + (m.competition ? '<span style="font-size:10px;color:#3a6080">' + esc(m.competition) + '</span>' : '');
 
-  // Auto-detect best market from live prices first, fall back to DB
-  const liveMkts = Object.keys(livePrices[mid] || {});
-  if (liveMkts.length) {
-    _applyMarketAndPlayer(mid, m, liveMkts, null);
-  } else {
-    // livePrices empty (server restart / match not active) — ask the DB
-    $('placeholder').textContent = 'Loading market info…';
-    fetch(apiUrl() + '/history/markets?match_id=' + mid)
-      .then(r => r.ok ? r.json() : Promise.reject('HTTP ' + r.status))
-      .then(data => {
-        const dbMkts = Object.keys(data.markets || {});
-        _applyMarketAndPlayer(mid, m, dbMkts, data.markets);
-      })
-      .catch(err => {
-        $('placeholder').textContent = 'Could not load markets: ' + err;
-      });
-  }
+  $('marketsPanel').style.display = '';
+  $('marketsInner').innerHTML = '<div class="mkts-empty">Loading markets…</div>';
+
+  fetch(apiUrl() + '/match-markets/' + mid)
+    .then(r => r.ok ? r.json() : Promise.reject())
+    .then(data => {
+      if (!livePrices[mid]) livePrices[mid] = {};
+      for (const [mkt, sels] of Object.entries(data.markets || {})) {
+        if (!livePrices[mid][mkt]) livePrices[mid][mkt] = {};
+        Object.assign(livePrices[mid][mkt], sels);
+      }
+      if (selMatch === mid) renderMarketsGrid(mid);
+    })
+    .catch(() => { if (selMatch === mid) renderMarketsGrid(mid); });
+
   connectSSE();
 }
 
-// Shared helper: pick market+player, merge DB selections into livePrices if needed,
-// then build toolbar and kick off history fetch.
-function _applyMarketAndPlayer(mid, m, mkts, dbMarkets) {
-  // If we got selections from the DB, inject them into livePrices so the
-  // toolbar market/player pills are populated even with no live feed.
-  if (dbMarkets) {
-    if (!livePrices[mid]) livePrices[mid] = {};
-    for (const [mkt, sels] of Object.entries(dbMarkets)) {
-      if (!livePrices[mid][mkt]) {
-        livePrices[mid][mkt] = {};
-        for (const sel of sels) livePrices[mid][mkt][sel] = null;
-      }
-    }
+function renderMarketsGrid(mid) {
+  const mkts = livePrices[mid] || {};
+  const mktKeys = Object.keys(mkts);
+  if (!mktKeys.length) {
+    $('marketsInner').innerHTML = '<div class="mkts-empty">No market data yet</div>';
+    return;
   }
-
-  selMarket = '';
-  for (const pm of PRIORITY_MARKETS) {
-    const found = mkts.find(k => k.toLowerCase().includes(pm));
-    if (found) { selMarket = found; break; }
+  let html = '<div class="markets-grid">';
+  for (const mkt of mktKeys) {
+    const sels = mkts[mkt] || {};
+    const selEntries = Object.entries(sels);
+    if (!selEntries.length) continue;
+    const btns = selEntries.map(([sel, odd]) => {
+      const isSusp = odd == null;
+      const isActive = selMarket === mkt && selPlayer === sel;
+      const oddStr = isSusp ? '—' : odd.toFixed(2);
+      return '<div class="sel-btn' + (isActive?' active':'') + (isSusp?' suspended':'') + '" data-mkt="' + esc(mkt) + '" data-sel="' + esc(sel) + '">'
+        + '<div class="flash-up"></div><div class="flash-down"></div>'
+        + '<div class="sel-lbl">' + esc(sel.length>13?sel.slice(0,11)+'…':sel) + '</div>'
+        + '<div class="sel-odd">' + oddStr + '</div>'
+        + (isSusp ? '<div class="sel-susp-lbl">susp</div>' : '<span class="sel-trend"></span>')
+        + '</div>';
+    }).join('');
+    html += '<div class="mkt-card"><div class="mkt-name">' + esc(mkt) + '</div><div class="sel-grid">' + btns + '</div></div>';
   }
-  if (!selMarket) selMarket = mkts[0] || '';
+  html += '</div>';
+  $('marketsInner').innerHTML = html;
+  $('marketsInner').querySelectorAll('.sel-btn').forEach(el =>
+    el.addEventListener('click', () => pickSelection(el.dataset.mkt, el.dataset.sel, el))
+  );
+}
 
-  // Auto-pick player: prefer player_a if it appears as a selection in the
-  // chosen market, otherwise fall back to first selection in that market.
-  const selKeys = selMarket ? Object.keys(livePrices[mid]?.[selMarket] || {}) : [];
-  if (m.player_a && selKeys.includes(m.player_a)) {
-    selPlayer = m.player_a;
-  } else if (selKeys.length) {
-    selPlayer = selKeys[0];
-  } else if (m.player_a) {
-    selPlayer = m.player_a;
-  }
-
+function pickSelection(mkt, sel, el) {
+  $('marketsInner').querySelectorAll('.sel-btn.active').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  selMarket = mkt; selPlayer = sel;
+  allPoints = []; lastLiveTs = 0;
+  resetChart();
   buildToolbar();
-  if (selPlayer && selMarket) fetchHistory();
+  fetchHistory();
 }
 
-// ── Toolbar ──────────────────────────────────────────────────────
 function buildToolbar() {
-  const m = matches[selMatch];
-  if (!m) return;
-  const mkts = Object.keys(livePrices[selMatch] || {});
-
-  let html = '';
-  // Player pills
-  [m.player_a, m.player_b].filter(Boolean).forEach(p => {
-    html += '<button class="pill' + (selPlayer === p ? ' active' : '') + '" data-p="' + p + '">' + p + '</button>';
+  const crumb = selPlayer
+    ? '<b style="color:var(--text-hi)">' + esc(selPlayer) + '</b> <span style="color:#3a6080">·</span> ' + esc(selMarket)
+    : '<span style="color:#3a6080">Click a selection above</span>';
+  let html = '<span style="flex:1;font-size:11px">' + crumb + '</span>';
+  [[5,'5m'],[15,'15m'],[60,'1h'],[360,'6h'],[0,'All']].forEach(([t,l]) => {
+    html += '<button class="pill' + (timeWindow===t?' active':'') + '" data-t="' + t + '">' + l + '</button>';
   });
-
-  if (mkts.length > 1) {
-    html += '<span class="sep"></span>';
-    mkts.forEach(k => {
-      const short = k.length > 20 ? k.slice(0, 18) + '…' : k;
-      html += '<button class="pill' + (selMarket === k ? ' active' : '') + '" data-mkt="' + k + '">' + short + '</button>';
-    });
-  }
-
-  // Time window pills
-  html += '<span style="flex:1"></span>';
-  const times = [[5, '5m'], [15, '15m'], [60, '1h'], [360, '6h'], [0, 'All']];
-  times.forEach(([m, label]) => {
-    html += '<button class="pill time-pill' + (timeWindow === m ? ' active' : '') + '" data-t="' + m + '">' + label + '</button>';
-  });
-
   $('toolbar').innerHTML = html;
-
-  // Click handlers
-  $('toolbar').querySelectorAll('[data-p]').forEach(el => {
-    el.addEventListener('click', () => {
-      selPlayer = el.dataset.p;
-      allPoints = [];
-      lastLiveTs = 0;
-      buildToolbar();
-      fetchHistory();
-    });
-  });
-  $('toolbar').querySelectorAll('[data-mkt]').forEach(el => {
-    el.addEventListener('click', () => {
-      selMarket = el.dataset.mkt;
-      allPoints = [];
-      lastLiveTs = 0;
-      buildToolbar();
-      fetchHistory();
-    });
-  });
-  $('toolbar').querySelectorAll('.time-pill').forEach(el => {
-    el.addEventListener('click', () => {
-      timeWindow = parseInt(el.dataset.t);
-      buildToolbar();
-      drawChart();
-    });
-  });
+  $('toolbar').querySelectorAll('[data-t]').forEach(el =>
+    el.addEventListener('click', () => { timeWindow = parseInt(el.dataset.t); buildToolbar(); drawChart(); })
+  );
 }
 
-// ── History fetch ────────────────────────────────────────────────
 async function fetchHistory() {
   if (!selMatch || !selPlayer) return;
-
+  $('placeholder').textContent = 'Loading…';
+  $('placeholder').style.display = '';
+  $('chart').style.display = 'none';
   try {
     const r = await fetch(apiUrl() + '/history'
       + '?match_id=' + selMatch
@@ -319,206 +313,179 @@ async function fetchHistory() {
       + '&limit=2000');
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const data = await r.json();
-    allPoints = (data.points || []).map(p => ({ x: p.ts * 1000, y: p.odd }));
-
-    // Stitch in current live price if fresher
+    allPoints = (data.points || []).map(p => ({ x: p.ts*1000, y: p.odd }));
     const cur = livePrices[selMatch]?.[selMarket]?.[selPlayer];
-    if (cur !== undefined) {
-      const last = allPoints.length ? allPoints[allPoints.length - 1].x / 1000 : 0;
-      if ((Date.now() / 1000) - last > 2) {
-        allPoints.push({ x: Date.now(), y: cur });
-      }
+    if (cur != null) {
+      const last = allPoints.length ? allPoints[allPoints.length-1].x/1000 : 0;
+      if (Date.now()/1000 - last > 2) allPoints.push({ x: Date.now(), y: cur });
     }
-    lastLiveTs = allPoints.length ? allPoints[allPoints.length - 1].x : 0;
+    lastLiveTs = allPoints.length ? allPoints[allPoints.length-1].x : 0;
     drawChart();
-  } catch (e) {
-    $('placeholder').textContent = 'Error loading history: ' + e.message;
-    $('placeholder').style.display = '';
-    $('chart').style.display = 'none';
+  } catch(e) {
+    $('placeholder').textContent = 'Error: ' + e.message;
   }
 }
 
-// ── Chart ────────────────────────────────────────────────────────
 function resetChart() {
   if (chart) { chart.destroy(); chart = null; }
   $('chart').style.display = 'none';
   $('placeholder').style.display = '';
+  $('placeholder').textContent = 'Select a match, then click a selection';
   $('infoBar').innerHTML = '';
+  buildToolbar();
 }
 
 function drawChart() {
-  resetChart();
-
+  if (chart) { chart.destroy(); chart = null; }
   let pts = [...allPoints];
   if (timeWindow > 0) {
-    const cutoff = Date.now() - timeWindow * 60 * 1000;
-    pts = pts.filter(p => p.x >= cutoff);
-    // Keep last point before cutoff for continuity
-    const before = allPoints.filter(p => p.x < cutoff);
-    if (before.length && pts.length) pts = [before[before.length - 1], ...pts];
+    const cut = Date.now() - timeWindow*60000;
+    const before = pts.filter(p => p.x < cut);
+    pts = pts.filter(p => p.x >= cut);
+    if (before.length && pts.length) pts = [before[before.length-1], ...pts];
   }
   if (!pts.length) {
     $('placeholder').textContent = 'No data for this selection';
     $('placeholder').style.display = '';
     return;
   }
-
   $('chart').style.display = '';
   $('placeholder').style.display = 'none';
-
   const ctx = $('chart').getContext('2d');
+  const _yv = pts.map(p=>p.y), _ymn=Math.min(..._yv), _ymx=Math.max(..._yv);
+  const _ypad = Math.max(0.02, (_ymx-_ymn)*0.1) || 0.05;
   chart = new Chart(ctx, {
     type: 'line',
-    data: {
-      datasets: [{
-        label: selPlayer + ' — ' + selMarket,
-        data: pts,
-        borderColor: '#00d4aa',
-        backgroundColor: 'rgba(0,212,170,0.08)',
-        borderWidth: 1.5,
-        pointRadius: 2,
-        pointHoverRadius: 4,
-        fill: true,
-        tension: 0.05,
-      }]
-    },
+    data: { datasets: [{ label: selPlayer + ' — ' + selMarket, data: pts,
+        borderColor: '#00d4aa', backgroundColor: 'rgba(0,212,170,0.08)',
+        borderWidth: 1.5, pointRadius: pts.length>300?0:2, pointHoverRadius:4, fill:true, tension:0.05 }] },
     options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      animation: false,
-      interaction: { intersect: false, mode: 'nearest' },
+      responsive:true, maintainAspectRatio:false, animation:false,
+      interaction:{ intersect:false, mode:'nearest' },
       scales: {
-        x: {
-          type: 'time',
-          time: {
-            unit: timeWindow <= 15 ? 'minute' : timeWindow <= 360 ? 'hour' : 'day',
-            displayFormats: { minute: 'HH:mm', hour: 'HH:mm', day: 'MMM d' }
-          },
-          grid: { color: '#1a2e45' },
-          ticks: { color: '#3a6080', font: { size: 10 }, maxTicksLimit: 12 }
-        },
-        y: {
-          grid: { color: '#1a2e45' },
-          ticks: { color: '#3a6080', font: { size: 10 }, callback: v => v.toFixed(2) },
-          min: undefined,
-          max: undefined,
-        }
+        x: { type:'time', time:{ unit:timeWindow<=15?'minute':timeWindow<=360?'hour':'day',
+              displayFormats:{minute:'HH:mm',hour:'HH:mm',day:'MMM d'} },
+             grid:{color:'#1a2e45'}, ticks:{color:'#3a6080',font:{size:10},maxTicksLimit:12} },
+        y: { min:_ymn-_ypad, max:_ymx+_ypad, grid:{color:'#1a2e45'}, ticks:{color:'#3a6080',font:{size:10},callback:v=>v.toFixed(2)} }
       },
       plugins: {
-        legend: { display: false },
-        tooltip: {
-          backgroundColor: '#0c1420',
-          borderColor: '#1a2e45',
-          borderWidth: 1,
-          titleColor: '#8ab4d4',
-          bodyColor: '#cde4f7',
-          titleFont: { family: 'Fira Mono', size: 11 },
-          bodyFont: { family: 'Fira Mono', size: 13 },
-          callbacks: {
-            label: ctx => ctx.parsed.y.toFixed(2),
-          }
-        }
+        legend:{display:false},
+        tooltip:{ backgroundColor:'#0c1420', borderColor:'#1a2e45', borderWidth:1,
+          titleColor:'#8ab4d4', bodyColor:'#cde4f7',
+          titleFont:{family:'Fira Mono',size:11}, bodyFont:{family:'Fira Mono',size:13},
+          callbacks:{label:ctx=>ctx.parsed.y.toFixed(2)} }
       }
     }
   });
-
   updateInfoBar(pts);
 }
 
 function updateInfoBar(pts) {
-  if (!pts || !pts.length) return;
-  const vals = pts.map(p => p.y);
-  const cur = vals[vals.length - 1];
-  const min = Math.min(...vals);
-  const max = Math.max(...vals);
-  const delta = cur - vals[0];
-  const deltaSign = delta > 0 ? '+' : '';
-  const deltaColor = delta > 0 ? 'var(--green)' : delta < 0 ? 'var(--red)' : 'var(--text)';
-
+  if (!pts?.length) return;
+  const vals = pts.map(p=>p.y);
+  const cur=vals[vals.length-1], min=Math.min(...vals), max=Math.max(...vals);
+  const delta=cur-vals[0];
+  const col=delta>0?'var(--green)':delta<0?'var(--red)':'var(--text)';
   $('infoBar').innerHTML =
-    '<div class="info-stat"><div class="lbl">Current</div><div class="val">' + cur.toFixed(2) + '</div></div>' +
-    '<div class="info-stat"><div class="lbl">Min</div><div class="val">' + min.toFixed(2) + '</div></div>' +
-    '<div class="info-stat"><div class="lbl">Max</div><div class="val">' + max.toFixed(2) + '</div></div>' +
-    '<div class="info-stat"><div class="lbl">Delta</div><div class="val delta" style="color:' + deltaColor + '">' + deltaSign + delta.toFixed(2) + '</div></div>' +
-    '<div class="info-stat"><div class="lbl">Points</div><div class="val">' + pts.length + '</div></div>' +
-    (allPoints.length !== pts.length ? '<div class="info-stat"><div class="lbl">Total</div><div class="val">' + allPoints.length + '</div></div>' : '');
+    st('Current',cur.toFixed(2)) + st('Min',min.toFixed(2)) + st('Max',max.toFixed(2)) +
+    st('Δ',(delta>=0?'+':'')+delta.toFixed(2),col) + st('Points',pts.length) +
+    (allPoints.length!==pts.length?st('Total',allPoints.length):'');
+}
+function st(l,v,col='') {
+  return '<div class="info-stat"><div class="lbl">'+l+'</div><div class="val"'+(col?' style="color:'+col+'"':'')+'>'+v+'</div></div>';
 }
 
-// ── Live chart update (called from SSE) ──────────────────────────
 function pushLivePoint(ts, odd) {
-  const x = ts * 1000;
-  if (x <= lastLiveTs) return; // dedupe
-
-  allPoints.push({ x, y: odd });
-  lastLiveTs = x;
-  if (allPoints.length > 5000) allPoints = allPoints.slice(-5000);
-
+  const x = ts*1000;
+  if (x <= lastLiveTs) return;
+  allPoints.push({x,y:odd}); lastLiveTs=x;
+  if (allPoints.length>5000) allPoints=allPoints.slice(-5000);
   if (!chart) return;
-
-  const ds = chart.data.datasets[0].data;
-  ds.push({ x, y: odd });
-
-  // If time filter active, trim front of visible dataset
-  if (timeWindow > 0) {
-    const cutoff = Date.now() - timeWindow * 60 * 1000;
-    while (ds.length > 1 && ds[0].x < cutoff) ds.shift();
-  }
-  if (ds.length > 1000) ds.shift();
-
+  const ds=chart.data.datasets[0].data;
+  ds.push({x,y:odd});
+  if (timeWindow>0) { const cut=Date.now()-timeWindow*60000; while(ds.length>1&&ds[0].x<cut) ds.shift(); }
+  if (ds.length>1000) ds.shift();
   chart.update('none');
   updateInfoBar(ds);
 }
 
-// ── SSE ──────────────────────────────────────────────────────────
+function flashBtn(btn, dir) {
+  btn.classList.remove('flashing-up','flashing-down');
+  void btn.offsetWidth;
+  btn.classList.add(dir==='up'?'flashing-up':'flashing-down');
+  setTimeout(()=>btn.classList.remove('flashing-up','flashing-down'),700);
+}
+
+function patchMarketsGrid(mid, mkt, oddsObj) {
+  if (mid !== selMatch) return;
+  const inner = $('marketsInner');
+  if (!inner) return;
+  for (const [sel, odd] of Object.entries(oddsObj)) {
+    const btn = inner.querySelector('.sel-btn[data-mkt="' + CSS.escape(mkt) + '"][data-sel="' + CSS.escape(sel) + '"]');
+    if (!btn) { renderMarketsGrid(mid); return; }
+    const isSusp = odd == null;
+    const wasSusp = btn.classList.contains('suspended');
+    btn.classList.toggle('suspended', isSusp);
+    const k = mid+'|'+mkt+'|'+sel;
+    const prev = prevBtnOdds[k];
+    prevBtnOdds[k] = odd;
+    const oddEl = btn.querySelector('.sel-odd');
+    if (oddEl) { oddEl.textContent = isSusp ? '—' : odd.toFixed(2); oddEl.style.textDecoration = isSusp?'line-through':''; }
+    let suspLbl = btn.querySelector('.sel-susp-lbl');
+    let trendEl = btn.querySelector('.sel-trend');
+    if (isSusp && !suspLbl) { if(trendEl)trendEl.remove(); btn.insertAdjacentHTML('beforeend','<div class="sel-susp-lbl">susp</div>'); }
+    else if (!isSusp && suspLbl) { suspLbl.remove(); btn.insertAdjacentHTML('beforeend','<span class="sel-trend"></span>'); trendEl=btn.querySelector('.sel-trend'); }
+    if (!isSusp && wasSusp) { flashBtn(btn,'up'); }
+    else if (!isSusp && !wasSusp && trendEl) {
+      const dir = prev===undefined?null:odd>prev+0.001?'up':odd<prev-0.001?'down':null;
+      trendEl.className='sel-trend'+(dir?' '+dir:'');
+      trendEl.textContent=dir==='up'?'▲':dir==='down'?'▼':'';
+      if(dir) flashBtn(btn,dir);
+    }
+  }
+}
+
 function connectSSE() {
   disconnectSSE();
   es = new EventSource(apiUrl() + '/stream');
-
   es.addEventListener('snapshot', e => {
     try {
       const d = JSON.parse(e.data);
       if (d.prices) {
         for (const [mid, mkts] of Object.entries(d.prices)) {
-          livePrices[mid] = Object.assign(livePrices[mid] || {}, mkts);
+          if (!livePrices[mid]) livePrices[mid] = {};
+          for (const [m, sels] of Object.entries(mkts))
+            livePrices[mid][m] = Object.assign(livePrices[mid][m]||{}, sels);
         }
       }
-    } catch (_) {}
+      if (selMatch) renderMarketsGrid(selMatch);
+    } catch(_) {}
   });
-
   es.addEventListener('message', e => {
     if (!e.data) return;
     try {
       const d = JSON.parse(e.data);
       if (d.type !== 'price') return;
-
-      // Update livePrices cache
       const mid = String(d.match_id);
       if (!livePrices[mid]) livePrices[mid] = {};
-      livePrices[mid][d.market] = d.odds;
-
-      // Update matches metadata from SSE
+      if (!livePrices[mid][d.market]) livePrices[mid][d.market] = {};
+      Object.assign(livePrices[mid][d.market], d.odds);
       if (d.meta) matches[mid] = d.meta;
-
-      // Push to chart if it matches current selection
-      if (mid === selMatch && d.market === selMarket && d.odds?.[selPlayer] !== undefined) {
-        pushLivePoint(d.ts, d.odds[selPlayer]);
-      }
-    } catch (_) {}
+      if (mid === selMatch) patchMarketsGrid(mid, d.market, d.odds);
+      if (mid===selMatch && d.market===selMarket && d.odds?.[selPlayer]!=null) pushLivePoint(d.ts, d.odds[selPlayer]);
+    } catch(_) {}
   });
-
-  es.onerror = () => {
-    es.close();
-    setTimeout(connectSSE, 5000);
-  };
+  es.onerror = () => { es.close(); setTimeout(connectSSE, 5000); };
 }
 
-function disconnectSSE() {
-  if (es) { es.close(); es = null; }
-}
+function disconnectSSE() { if (es) { es.close(); es=null; } }
 
-// ── Boot ─────────────────────────────────────────────────────────
-init();
-setInterval(init, 60000); // refresh match list every 60s
+buildToolbar();
+init().then(() => {
+  const mid = new URLSearchParams(location.search).get('match_id');
+  if (mid && matches[mid]) selectMatch(mid);
+});
+setInterval(renderSidebar, 30000);
 </script>
 </body>
 </html>

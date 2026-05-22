@@ -246,6 +246,45 @@ def parse_betoffers(
     return updates
 
 
+def parse_all_betoffers(data: dict) -> dict[str, dict[str, Optional[float]]]:
+    """Parse every bet offer without market filtering.
+
+    Returns {market_key: {selection: odd | None}} where None means suspended.
+    """
+    markets: dict[str, dict[str, Optional[float]]] = {}
+    for bo in data.get("betOffers", []):
+        criterion = bo.get("criterion", {})
+        label = criterion.get("englishLabel", "") or criterion.get("label", "")
+        if not label:
+            continue
+
+        market_key = label
+        line = None
+        outcomes = bo.get("outcomes", [])
+        for outcome in outcomes:
+            if "line" in outcome:
+                line = outcome["line"] / 1000.0
+                break
+        if line is not None:
+            market_key = f"{label} {line:g}"
+
+        sels: dict[str, Optional[float]] = {}
+        for outcome in outcomes:
+            sel_label = outcome.get("englishLabel") or outcome.get("label", "")
+            if not sel_label:
+                continue
+            odd_int = outcome.get("odds")
+            if outcome.get("status") != "OPEN" or odd_int is None:
+                sels[sel_label] = None  # suspended / unavailable
+            else:
+                sels[sel_label] = _odds_int_to_float(odd_int)
+
+        if sels:
+            markets[market_key] = sels
+
+    return markets
+
+
 def diff_odds(
     match_id: int,
     market: str,
